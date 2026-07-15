@@ -1,0 +1,34 @@
+{% extends "library/base.html" %}
+{% block content %}
+<div class="rolebar">Role: <b>{{ role }}</b>{% if role != "management" %} — you see final approved documents only{% endif %}</div>
+<div class="card">
+  <form method="get" style="display:flex;gap:10px;flex-wrap:wrap">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search title, code, folder…" style="flex:1;min-width:220px">
+    <select name="section">
+      <option value="">All sections</option>
+      {% for val,label in sections %}<option value="{{ val }}" {% if section == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Search</button>
+  </form>
+</div>
+<div class="card">
+  <table>
+    <tr><th>Code</th><th>Document</th><th>Rev</th><th>Section / folder</th><th>Issued</th><th></th></tr>
+    {% for d in page %}
+    <tr>
+      <td><b>{{ d.code }}</b></td>
+      <td>{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
+      <td>{{ d.revision }}</td>
+      <td style="color:var(--grey)">{{ d.section }} / {{ d.folder }}</td>
+      <td>{{ d.issue_date|date:"d/m/Y" }}</td>
+      <td><a href="{% url 'library:download' d.pk %}">open</a></td>
+    </tr>
+    {% empty %}<tr><td colspan="6">No documents found.</td></tr>{% endfor %}
+  </table>
+  <p class="pag">
+    {% if page.has_previous %}<a href="?q={{ q }}&section={{ section }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
+    page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} documents)
+    {% if page.has_next %}<a href="?q={{ q }}&section={{ section }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
+  </p>
+</div>
+{% endblock %}

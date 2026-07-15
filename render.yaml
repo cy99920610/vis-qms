@@ -1,0 +1,27 @@
+# Render Blueprint — creates the web service + PostgreSQL database
+services:
+  - type: web
+    name: vis-qms
+    runtime: python
+    plan: starter            # $7/mo — always-on (free tier sleeps; bad for an audit demo)
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn visqms.wsgi:application"
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "vis-qms.com,www.vis-qms.com,.onrender.com"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: visqms-db
+          property: connectionString
+      - key: DJANGO_SUPERUSER_USERNAME
+        value: admin
+      - key: DJANGO_SUPERUSER_EMAIL
+        value: mg@vis-recruit.com
+      # set DJANGO_SUPERUSER_PASSWORD manually in the Render dashboard (do not commit)
+databases:
+  - name: visqms-db
+    plan: basic-256mb
