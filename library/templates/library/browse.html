@@ -11,11 +11,27 @@
         {% include "library/_folder_tree.html" with nodes=tree q=q %}
       </div>
     </div>
+
+    <div class="agent-col">
+      <div class="card">
+        <div class="agent-head">
+          <h2>Ask the QMS Assistant</h2>
+          <p class="hint">Ask in plain language — it searches the library for you.</p>
+        </div>
+        <div id="chat-log" class="chat-log">
+          <div class="chat-msg bot">Hi! Ask me to find a document — e.g. "emergency contact procedure" or "2024 internal audit records" — and I'll dig through the library for you.</div>
+        </div>
+        <form id="chat-form" class="chat-form">
+          <input type="text" id="chat-input" placeholder="Ask a question…" autocomplete="off">
+          <button type="submit">Send</button>
+        </form>
+      </div>
+    </div>
   </div>
 
   <div class="main-col">
     <div class="card">
-      <form method="get" style="display:flex;gap:10px;flex-wrap:wrap">
+      <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input type="text" name="q" value="{{ q }}" placeholder="Search title, code, folder…" style="flex:1;min-width:220px">
         <select name="section">
           <option value="">All sections</option>
@@ -26,48 +42,43 @@
           {% for f in formats %}<option value="{{ f }}" {% if format == f %}selected{% endif %}>{{ f|upper }}</option>{% endfor %}
         </select>
         <input type="hidden" name="folder" value="{{ folder }}">
+        <label class="content-toggle">
+          <input type="checkbox" name="content" value="1" {% if content_search %}checked{% endif %}>
+          Search inside file content
+        </label>
         <button type="submit">Search</button>
       </form>
+      {% if content_search and q %}
+        <p class="hint" style="margin:10px 2px 0">
+          Searched inside PDF/DOCX/XLSX/CSV/MD/TXT files for “{{ q }}”{% if content_truncated %} — checked the {{ content_scan_limit }} most recent matching documents; narrow with a section or folder for full coverage{% endif %}.
+        </p>
+      {% endif %}
     </div>
     <div class="card">
-      <table>
-        <tr><th>Code</th><th>Document</th><th>Rev</th><th>Section / folder</th><th>Issued</th><th>Actions</th></tr>
+      <div class="table-scroll">
+      <table class="doc-table">
+        <tr><th class="c-doc">Document</th><th class="c-folder">Folder</th><th class="c-issued">Issued</th><th class="c-actions">Actions</th></tr>
         {% for d in page %}
         <tr class="doc-row" onclick="rowClicked(event, '{% url 'library:download' d.pk %}', {{ d.is_pdf|yesno:'true,false' }})">
-          <td class="code">{{ d.code }}</td>
-          <td>{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
-          <td>{{ d.revision }}</td>
-          <td style="color:var(--muted)">{{ d.section }} / {{ d.folder }}</td>
-          <td>{{ d.issue_date|date:"d/m/Y" }}</td>
-          <td class="actions" onclick="event.stopPropagation()">
-            {% if d.is_pdf %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁 Preview</button>{% endif %}
-            <a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener">↗ Open</a>
-            <a href="{% url 'library:download' d.pk %}?dl=1">⬇ Download</a>
+          <td class="c-doc">{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
+          <td class="c-folder" style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ d.folder }}">{{ d.folder }}</td>
+          <td class="c-issued">{{ d.issue_date|date:"d/m/Y" }}</td>
+          <td class="c-actions" onclick="event.stopPropagation()">
+            <span class="actions">
+              {% if d.is_pdf %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁</button>{% endif %}
+              <a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener" title="Open">↗</a>
+              <a href="{% url 'library:download' d.pk %}?dl=1" title="Download">⬇</a>
+            </span>
           </td>
         </tr>
-        {% empty %}<tr><td colspan="6">No documents found.</td></tr>{% endfor %}
+        {% empty %}<tr><td colspan="4">No documents found.</td></tr>{% endfor %}
       </table>
+      </div>
       <p class="pag">
-        {% if page.has_previous %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
+        {% if page.has_previous %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&content={{ content_search|yesno:'1,0' }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
         page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} documents)
-        {% if page.has_next %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
+        {% if page.has_next %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&content={{ content_search|yesno:'1,0' }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
       </p>
-    </div>
-  </div>
-
-  <div class="agent-col">
-    <div class="card">
-      <div class="agent-head">
-        <h2>Ask the QMS Assistant</h2>
-        <p class="hint">Ask in plain language — it searches the library for you.</p>
-      </div>
-      <div id="chat-log" class="chat-log">
-        <div class="chat-msg bot">Hi! Ask me to find a document — e.g. "emergency contact procedure" or "2024 internal audit records" — and I'll dig through the library for you.</div>
-      </div>
-      <form id="chat-form" class="chat-form">
-        <input type="text" id="chat-input" placeholder="Ask a question…" autocomplete="off">
-        <button type="submit">Send</button>
-      </form>
     </div>
   </div>
 </div>

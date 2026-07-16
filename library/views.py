@@ -1,6 +1,7 @@
 import json
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
@@ -10,7 +11,10 @@ from django.shortcuts import render, get_object_or_404
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
-from .models import Document, DownloadLog, SECTIONS
+from .content import extract_document_text
+from .models import Document, DownloadLog, Section
+
+CONTENT_SEARCH_SCAN_LIMIT = 60
 
 
 def visible_documents(user):
@@ -25,14 +29,15 @@ def visible_documents(user):
 
 
 def build_folder_tree(qs, current_folder=""):
-    """Build a nested folder tree (one root per SECTIONS entry) from a
+    """Build a nested folder tree (one root per Section) from a
     role-filtered Document queryset. The tree always reflects the full
     library structure visible to the user, independent of any active
     text/section search."""
+    sections = list(Section.objects.values_list("code", "label"))
     folder_counts = Counter(qs.exclude(folder="").values_list("folder", flat=True))
 
     roots = {code: {"name": label, "path": code, "section_code": code,
-                     "own_count": 0, "children_map": {}} for code, label in SECTIONS}
+                     "own_count": 0, "children_map": {}} for code, label in sections}
 
     for folder, count in folder_counts.items():
         parts = [p for p in re.split(r"[\\/]+", folder.strip("\\/ ")) if p]
@@ -71,7 +76,7 @@ def build_folder_tree(qs, current_folder=""):
         del node["children_map"]
 
     tree = []
-    for code, _ in SECTIONS:
+    for code, _ in sections:
         finalize(roots[code])
         tree.append(roots[code])
     return tree
@@ -90,7 +95,7 @@ def dashboard(request):
     qs = visible_documents(request.user)
     section_counts = [
         {"code": code, "label": label, "count": qs.filter(section=code).count()}
-        for code, label in SECTIONS
+        for code, label in Section.objects.values_list("code", "label")
     ]
     recent = qs.order_by("-uploaded_at")[:8]
     return render(request, "library/dashboard.html", {
@@ -111,6 +116,28 @@ def distinct_formats(qs):
     return sorted(exts)
 
 
+def search_document_contents(qs, keyword, limit=CONTENT_SEARCH_SCAN_LIMIT):
+    """Scans the most recent `limit` documents in qs for keyword inside the
+    actual file text (PDF/DOCX/XLSX/CSV/MD/TXT only). Returns a Document
+    queryset of the matches, most recent first. Fetches run in parallel
+    since each is a network round-trip to file storage."""
+    candidates = list(qs.order_by("-issue_date")[:limit])
+    needle = keyword.lower()
+
+    def matches(doc):
+        text = extract_document_text(doc)
+        return doc.pk if text and needle in text.lower() else None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        matched_ids = [pk for pk in pool.map(matches, candidates) if pk]
+
+    order = {pk: i for i, pk in enumerate(matched_ids)}
+    return sorted(
+        Document.objects.filter(pk__in=matched_ids),
+        key=lambda d: order[d.pk],
+    )
+
+
 @login_required
 def browse(request):
     base_qs = visible_documents(request.user)
@@ -118,16 +145,22 @@ def browse(request):
     section = request.GET.get("section", "")
     folder = request.GET.get("folder", "").strip()
     fmt = request.GET.get("format", "").strip().lower()
+    content_search = request.GET.get("content") == "1"
 
     qs = base_qs
-    if q:
-        qs = qs.filter(Q(title__icontains=q) | Q(code__icontains=q) | Q(folder__icontains=q) | Q(notes__icontains=q))
     if section:
         qs = qs.filter(section=section)
     if folder:
         qs = qs.filter(Q(folder=folder) | Q(folder__startswith=folder + "\\"))
     if fmt:
         qs = qs.filter(file__iendswith="." + fmt)
+
+    content_truncated = False
+    if q and content_search:
+        content_truncated = qs.count() > CONTENT_SEARCH_SCAN_LIMIT
+        qs = search_document_contents(qs, q)
+    elif q:
+        qs = qs.filter(Q(title__icontains=q) | Q(code__icontains=q) | Q(folder__icontains=q) | Q(notes__icontains=q))
 
     tree = build_folder_tree(base_qs, current_folder=folder)
     formats = distinct_formats(base_qs)
@@ -137,6 +170,8 @@ def browse(request):
     return render(request, "library/browse.html", {
         "page": page, "q": q, "section": section, "folder": folder, "format": fmt,
         "sections": sections, "formats": formats, "role": user_role(request.user), "tree": tree,
+        "content_search": content_search, "content_truncated": content_truncated,
+        "content_scan_limit": CONTENT_SEARCH_SCAN_LIMIT,
     })
 
 
