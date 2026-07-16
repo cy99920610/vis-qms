@@ -56,7 +56,7 @@ class Command(BaseCommand):
                     skipped += 1
                     continue
                 is_final = "DRAFT" not in fn.upper()
-                d = Document(title=fn, code=doc_code(fn), revision=revision(fn),
+                d = Document(title=fn, code=doc_code(fn)[:40], revision=revision(fn),
                              section=section if section in dict(Document._meta.get_field("section").choices) else "01_ISO-9001-QMS",
                              folder=folder, is_final=is_final,
                              issue_date=datetime.date.fromtimestamp(p.stat().st_mtime))
