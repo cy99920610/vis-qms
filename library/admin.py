@@ -2,7 +2,6 @@ import json
 
 from django import forms
 from django.contrib import admin
-from django.utils.html import escape
 from django.utils.safestring import mark_safe
 
 from .models import Document, DownloadLog, Section
@@ -10,34 +9,45 @@ from .views import build_folder_tree
 
 
 class FolderPathWidget(forms.TextInput):
-    """Folder field enhanced with a level-by-level path builder: pick the
-    section, then pick (or type a brand-new) subfolder, then the next
-    subfolder under that, and so on — mirroring the frontend library tree
-    instead of requiring a hand-typed backslash path. Also keeps a plain,
-    directly-editable text input (with autocomplete) as a fallback."""
+    """Folder field driven by a level-by-level breadcrumb picker: pick the
+    section, then pick an existing subfolder from a dropdown, then the next
+    subfolder under that, and so on for as many levels as already exist —
+    only once you're past the last existing level does it ask you to type a
+    new folder name. The raw path field is read-only by default (built for
+    you) with a manual-edit escape hatch for power users."""
 
     def render(self, name, value, attrs=None, renderer=None):
-        attrs = {**(attrs or {}), "id": "id_folder", "list": "folder-options", "autocomplete": "off",
-                 "style": "width:520px", "placeholder": r"01_ISO-9001-QMS\04_QUALITY-PROCEDURES\QP-3"}
+        attrs = {**(attrs or {}), "id": "id_folder", "readonly": "readonly",
+                 "style": "width:100%;max-width:640px;background:#f3f3f3;font-family:monospace"}
         input_html = super().render(name, value, attrs, renderer)
-
-        folders = Document.objects.exclude(folder="").values_list("folder", flat=True).distinct().order_by("folder")
-        datalist_html = "".join(f'<option value="{escape(f)}">' for f in folders)
 
         tree = build_folder_tree(Document.objects.all())
         tree_json = json.dumps(tree).replace("</", "<\\/")
 
         return mark_safe(f"""
-<div id="folder-builder" style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
-<div style="font-size:12px;color:#777;margin-bottom:4px">Build the path level by level above, or type/edit it directly below.</div>
+<div style="border:1px solid #ccc;border-radius:6px;padding:10px 12px;max-width:720px;background:#fafafa">
+  <div style="font-size:12px;color:#666;margin-bottom:8px">
+    Pick a subfolder at each step — the dropdown offers every existing subfolder first;
+    choose <b>+ New folder…</b> only once you're past the last existing level.
+  </div>
+  <div id="folder-builder" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center"></div>
+</div>
+<div style="margin:8px 0 4px">
+  <label style="font-size:12px;color:#666">
+    <input type="checkbox" id="folder-manual-toggle" style="width:auto;vertical-align:middle">
+    Edit path manually instead
+  </label>
+</div>
 {input_html}
-<datalist id="folder-options">{datalist_html}</datalist>
+<div style="font-size:11.5px;color:#999;margin-top:2px">Full path (built automatically from your picks above).</div>
 <script>
 (function () {{
   var TREE = {tree_json};
   var sectionField = document.getElementById("id_section");
   var folderField = document.getElementById("id_folder");
   var levelsBox = document.getElementById("folder-builder");
+  var manualToggle = document.getElementById("folder-manual-toggle");
+  var SEP = " \\u203a ";
 
   function splitFolder(folder, sectionCode) {{
     if (!folder) return [];
@@ -58,22 +68,41 @@ class FolderPathWidget(forms.TextInput):
 
   function renderLevel(sectionCode, parentNode, pathSoFar, presetSegments) {{
     var level = document.createElement("span");
+    level.style.display = "inline-flex";
+    level.style.alignItems = "center";
+    level.style.gap = "4px";
+    if (pathSoFar.length) {{
+      var sep = document.createElement("span");
+      sep.textContent = SEP;
+      sep.style.color = "#999";
+      level.appendChild(sep);
+    }}
     levelsBox.appendChild(level);
 
+    var children = (parentNode && parentNode.children) || [];
     var select = document.createElement("select");
-    select.add(new Option("(end path here)", ""));
-    (parentNode && parentNode.children || []).forEach(function (c) {{
-      select.add(new Option(c.name + " (" + c.count + ")", c.name));
+    select.style.minWidth = "170px";
+    select.add(new Option(children.length ? "\\u2014 stop here \\u2014" : "\\u2014 stop here \\u2014", ""));
+    children.forEach(function (c) {{
+      select.add(new Option(c.name + " (" + c.count + " doc" + (c.count === 1 ? "" : "s") + ")", c.name));
     }});
     select.add(new Option("+ New folder\\u2026", "__new__"));
     level.appendChild(select);
 
     var textInput = document.createElement("input");
     textInput.type = "text";
-    textInput.placeholder = "folder name";
+    textInput.placeholder = "new folder name";
     textInput.style.display = "none";
-    textInput.style.minWidth = "140px";
+    textInput.style.minWidth = "160px";
     level.appendChild(textInput);
+
+    var confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.textContent = "\\u2713";
+    confirmBtn.title = "Confirm new folder name";
+    confirmBtn.style.display = "none";
+    confirmBtn.style.cursor = "pointer";
+    level.appendChild(confirmBtn);
 
     function choose(chosenName, childNode) {{
       clearAfter(level);
@@ -82,16 +111,21 @@ class FolderPathWidget(forms.TextInput):
       if (chosenName) renderLevel(sectionCode, childNode, newPath, []);
     }}
 
+    function enterNewMode() {{
+      select.style.display = "none";
+      textInput.style.display = "";
+      confirmBtn.style.display = "";
+      textInput.value = "";
+      textInput.focus();
+      clearAfter(level);
+      setFolderValue(sectionCode, pathSoFar);
+    }}
+
     select.onchange = function () {{
       if (select.value === "__new__") {{
-        select.style.display = "none";
-        textInput.style.display = "";
-        textInput.value = "";
-        textInput.focus();
-        clearAfter(level);
-        setFolderValue(sectionCode, pathSoFar);
+        enterNewMode();
       }} else {{
-        var child = (parentNode && parentNode.children || []).find(function (c) {{ return c.name === select.value; }});
+        var child = children.find(function (c) {{ return c.name === select.value; }});
         choose(select.value, child || null);
       }}
     }};
@@ -99,13 +133,17 @@ class FolderPathWidget(forms.TextInput):
       clearAfter(level);
       setFolderValue(sectionCode, pathSoFar.concat(textInput.value ? [textInput.value] : []));
     }};
-    textInput.onblur = function () {{
+    function commitNew() {{
       if (textInput.value) choose(textInput.value, null);
-    }};
+    }}
+    textInput.addEventListener("keydown", function (e) {{
+      if (e.key === "Enter") {{ e.preventDefault(); commitNew(); }}
+    }});
+    confirmBtn.onclick = commitNew;
 
     var presetName = presetSegments[0];
     if (presetName !== undefined) {{
-      var match = (parentNode && parentNode.children || []).find(function (c) {{ return c.name === presetName; }});
+      var match = children.find(function (c) {{ return c.name === presetName; }});
       if (match) {{
         select.value = presetName;
         renderLevel(sectionCode, match, pathSoFar.concat([presetName]), presetSegments.slice(1));
@@ -113,6 +151,7 @@ class FolderPathWidget(forms.TextInput):
         select.value = "__new__";
         select.style.display = "none";
         textInput.style.display = "";
+        confirmBtn.style.display = "";
         textInput.value = presetName;
         renderLevel(sectionCode, null, pathSoFar.concat([presetName]), presetSegments.slice(1));
       }}
@@ -130,6 +169,10 @@ class FolderPathWidget(forms.TextInput):
   sectionField.addEventListener("change", function () {{
     folderField.value = sectionField.value;
     bootstrap();
+  }});
+  manualToggle.addEventListener("change", function () {{
+    folderField.readOnly = !manualToggle.checked;
+    folderField.style.background = manualToggle.checked ? "#fff" : "#f3f3f3";
   }});
 
   bootstrap();
