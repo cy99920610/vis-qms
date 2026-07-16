@@ -1,3 +1,5 @@
+import json
+
 from django import forms
 from django.contrib import admin
 from django.utils.html import escape
@@ -7,36 +9,140 @@ from .models import Document, DownloadLog, Section
 from .views import build_folder_tree
 
 
-class FolderTextInput(forms.TextInput):
-    """Plain text input with a native HTML5 datalist of existing folder
-    paths, so an admin can pick an existing folder (matching the frontend
-    library tree) or type a new subfolder path with the right prefix."""
+class FolderPathWidget(forms.TextInput):
+    """Folder field enhanced with a level-by-level path builder: pick the
+    section, then pick (or type a brand-new) subfolder, then the next
+    subfolder under that, and so on — mirroring the frontend library tree
+    instead of requiring a hand-typed backslash path. Also keeps a plain,
+    directly-editable text input (with autocomplete) as a fallback."""
 
     def render(self, name, value, attrs=None, renderer=None):
-        attrs = {**(attrs or {}), "list": "folder-options", "autocomplete": "off",
+        attrs = {**(attrs or {}), "id": "id_folder", "list": "folder-options", "autocomplete": "off",
                  "style": "width:520px", "placeholder": r"01_ISO-9001-QMS\04_QUALITY-PROCEDURES\QP-3"}
-        html = super().render(name, value, attrs, renderer)
+        input_html = super().render(name, value, attrs, renderer)
+
         folders = Document.objects.exclude(folder="").values_list("folder", flat=True).distinct().order_by("folder")
-        options = "".join(f'<option value="{escape(f)}">' for f in folders)
-        return mark_safe(f"{html}<datalist id=\"folder-options\">{options}</datalist>")
+        datalist_html = "".join(f'<option value="{escape(f)}">' for f in folders)
 
+        tree = build_folder_tree(Document.objects.all())
+        tree_json = json.dumps(tree).replace("</", "<\\/")
 
-def render_tree_html(nodes):
-    if not nodes:
-        return ""
-    items = "".join(
-        f'<li><code>{escape(n["path"])}</code> <span style="color:#999">({n["count"]})</span>'
-        f'{render_tree_html(n["children"])}</li>'
-        for n in nodes
-    )
-    return f'<ul style="margin:2px 0 2px 16px;padding:0 0 0 16px;list-style:disc">{items}</ul>'
+        return mark_safe(f"""
+<div id="folder-builder" style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center"></div>
+<div style="font-size:12px;color:#777;margin-bottom:4px">Build the path level by level above, or type/edit it directly below.</div>
+{input_html}
+<datalist id="folder-options">{datalist_html}</datalist>
+<script>
+(function () {{
+  var TREE = {tree_json};
+  var sectionField = document.getElementById("id_section");
+  var folderField = document.getElementById("id_folder");
+  var levelsBox = document.getElementById("folder-builder");
+
+  function splitFolder(folder, sectionCode) {{
+    if (!folder) return [];
+    var parts = folder.split(/[\\\\/]+/).filter(Boolean);
+    if (parts.length && parts[0] === sectionCode) parts = parts.slice(1);
+    return parts;
+  }}
+
+  function setFolderValue(sectionCode, segments) {{
+    folderField.value = [sectionCode].concat(segments).join("\\\\");
+  }}
+
+  function clearAfter(levelEl) {{
+    while (levelsBox.lastChild && levelsBox.lastChild !== levelEl) {{
+      levelsBox.removeChild(levelsBox.lastChild);
+    }}
+  }}
+
+  function renderLevel(sectionCode, parentNode, pathSoFar, presetSegments) {{
+    var level = document.createElement("span");
+    levelsBox.appendChild(level);
+
+    var select = document.createElement("select");
+    select.add(new Option("(end path here)", ""));
+    (parentNode && parentNode.children || []).forEach(function (c) {{
+      select.add(new Option(c.name + " (" + c.count + ")", c.name));
+    }});
+    select.add(new Option("+ New folder\\u2026", "__new__"));
+    level.appendChild(select);
+
+    var textInput = document.createElement("input");
+    textInput.type = "text";
+    textInput.placeholder = "folder name";
+    textInput.style.display = "none";
+    textInput.style.minWidth = "140px";
+    level.appendChild(textInput);
+
+    function choose(chosenName, childNode) {{
+      clearAfter(level);
+      var newPath = pathSoFar.concat(chosenName ? [chosenName] : []);
+      setFolderValue(sectionCode, newPath);
+      if (chosenName) renderLevel(sectionCode, childNode, newPath, []);
+    }}
+
+    select.onchange = function () {{
+      if (select.value === "__new__") {{
+        select.style.display = "none";
+        textInput.style.display = "";
+        textInput.value = "";
+        textInput.focus();
+        clearAfter(level);
+        setFolderValue(sectionCode, pathSoFar);
+      }} else {{
+        var child = (parentNode && parentNode.children || []).find(function (c) {{ return c.name === select.value; }});
+        choose(select.value, child || null);
+      }}
+    }};
+    textInput.oninput = function () {{
+      clearAfter(level);
+      setFolderValue(sectionCode, pathSoFar.concat(textInput.value ? [textInput.value] : []));
+    }};
+    textInput.onblur = function () {{
+      if (textInput.value) choose(textInput.value, null);
+    }};
+
+    var presetName = presetSegments[0];
+    if (presetName !== undefined) {{
+      var match = (parentNode && parentNode.children || []).find(function (c) {{ return c.name === presetName; }});
+      if (match) {{
+        select.value = presetName;
+        renderLevel(sectionCode, match, pathSoFar.concat([presetName]), presetSegments.slice(1));
+      }} else {{
+        select.value = "__new__";
+        select.style.display = "none";
+        textInput.style.display = "";
+        textInput.value = presetName;
+        renderLevel(sectionCode, null, pathSoFar.concat([presetName]), presetSegments.slice(1));
+      }}
+    }}
+  }}
+
+  function bootstrap() {{
+    levelsBox.innerHTML = "";
+    var sectionCode = sectionField.value;
+    var root = TREE.find(function (n) {{ return n.path === sectionCode; }});
+    var segments = splitFolder(folderField.value, sectionCode);
+    renderLevel(sectionCode, root, [], segments);
+  }}
+
+  sectionField.addEventListener("change", function () {{
+    folderField.value = sectionField.value;
+    bootstrap();
+  }});
+
+  bootstrap();
+}})();
+</script>
+""")
 
 
 class DocumentAdminForm(forms.ModelForm):
     class Meta:
         model = Document
         fields = "__all__"
-        widgets = {"folder": FolderTextInput}
+        widgets = {"folder": FolderPathWidget}
 
     def clean(self):
         cleaned = super().clean()
@@ -68,17 +174,6 @@ class DocumentAdmin(admin.ModelAdmin):
     search_fields = ("title", "code", "folder", "notes")
     list_editable = ("is_final",)
     date_hierarchy = "issue_date"
-    readonly_fields = ("folder_tree_reference",)
-    fields = ("title", "code", "revision", "section", "folder_tree_reference", "folder",
-              "issue_date", "file", "is_final", "notes", "uploaded_by")
-
-    @admin.display(description="Library structure — copy a path into Folder below")
-    def folder_tree_reference(self, obj):
-        tree = build_folder_tree(Document.objects.all())
-        return mark_safe(
-            '<div style="max-height:280px;overflow:auto;border:1px solid var(--border-color,#ccc);'
-            f'border-radius:4px;padding:10px 14px;background:rgba(127,127,127,.06)">{render_tree_html(tree)}</div>'
-        )
 
     def save_model(self, request, obj, form, change):
         if not obj.uploaded_by:
