@@ -90,8 +90,10 @@ if os.environ.get("AWS_STORAGE_BUCKET_NAME"):
     AWS_S3_SIGNATURE_VERSION = "s3v4"  # R2 only supports SigV4, not the SigV2 boto3 defaults to
     AWS_S3_REGION_NAME = "auto"
 
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
 LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "library:browse"
+LOGIN_REDIRECT_URL = "library:dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

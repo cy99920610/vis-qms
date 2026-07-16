@@ -1,0 +1,41 @@
+{% extends "library/base.html" %}
+{% block content %}
+<div class="rolebar">Role: <b>{{ role }}</b>{% if role != "management" %} — you see final approved documents only{% endif %}</div>
+
+<div class="hero">
+  <div>
+    <h1>Welcome back{% if request.user.first_name %}, {{ request.user.first_name }}{% endif %}</h1>
+    <p>Your controlled document library at a glance — jump into a section, search, or ask the assistant.</p>
+  </div>
+  <div class="cta">
+    <a href="{% url 'library:browse' %}"><button>Browse Documents</button></a>
+    <a href="{% url 'library:browse' %}#chat-input"><button class="secondary">Ask Assistant</button></a>
+  </div>
+</div>
+
+<div class="stat-grid">
+  <a class="stat-card total" href="{% url 'library:browse' %}">
+    <div class="n">{{ total }}</div>
+    <div class="l">Total documents</div>
+  </a>
+  {% for s in section_counts %}
+  <a class="stat-card" href="{% url 'library:browse' %}?section={{ s.code }}">
+    <div class="n">{{ s.count }}</div>
+    <div class="l">{{ s.label }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Recently issued</h2>
+  <p class="hint">The latest documents added to the library.</p>
+  <ul class="recent-list">
+    {% for d in recent %}
+    <li>
+      <a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener">{{ d.code }}{% if d.code %} — {% endif %}{{ d.title }}</a>
+      <span class="meta">{{ d.section }} &middot; {{ d.issue_date|date:"d/m/Y" }}</span>
+    </li>
+    {% empty %}<li>No documents yet.</li>{% endfor %}
+  </ul>
+</div>
+{% endblock %}

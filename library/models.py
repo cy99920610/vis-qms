@@ -32,6 +32,10 @@ class Document(models.Model):
     def __str__(self):
         return f"{self.code + ' — ' if self.code else ''}{self.title}"
 
+    @property
+    def is_pdf(self):
+        return self.file.name.lower().endswith(".pdf")
+
 
 class DownloadLog(models.Model):
     """Audit trail: who accessed which document, when (useful evidence for BV)."""

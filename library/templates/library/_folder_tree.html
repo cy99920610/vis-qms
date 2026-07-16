@@ -1,0 +1,14 @@
+{% for node in nodes %}
+<details {% if node.is_open %}open{% endif %}>
+  <summary>
+    <a href="?q={{ q|urlencode }}&section={{ node.section_code }}&folder={{ node.path|urlencode }}"
+       class="{% if node.is_active %}active{% endif %}">{{ node.name }}</a>
+    <span class="count">({{ node.count }})</span>
+  </summary>
+  {% if node.children %}
+  <div class="tree-children">
+    {% include "library/_folder_tree.html" with nodes=node.children q=q %}
+  </div>
+  {% endif %}
+</details>
+{% endfor %}

@@ -1,34 +1,138 @@
 {% extends "library/base.html" %}
 {% block content %}
 <div class="rolebar">Role: <b>{{ role }}</b>{% if role != "management" %} — you see final approved documents only{% endif %}</div>
-<div class="card">
-  <form method="get" style="display:flex;gap:10px;flex-wrap:wrap">
-    <input type="text" name="q" value="{{ q }}" placeholder="Search title, code, folder…" style="flex:1;min-width:220px">
-    <select name="section">
-      <option value="">All sections</option>
-      {% for val,label in sections %}<option value="{{ val }}" {% if section == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
-    <button type="submit">Search</button>
-  </form>
+
+<div class="shell">
+  <div class="tree-col">
+    <div class="card">
+      <h2>Library</h2>
+      <a class="clear-filters" href="{% url 'library:browse' %}">Clear all filters</a>
+      <div class="tree">
+        {% include "library/_folder_tree.html" with nodes=tree q=q %}
+      </div>
+    </div>
+  </div>
+
+  <div class="main-col">
+    <div class="card">
+      <form method="get" style="display:flex;gap:10px;flex-wrap:wrap">
+        <input type="text" name="q" value="{{ q }}" placeholder="Search title, code, folder…" style="flex:1;min-width:220px">
+        <select name="section">
+          <option value="">All sections</option>
+          {% for val,label in sections %}<option value="{{ val }}" {% if section == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <select name="format">
+          <option value="">All formats</option>
+          {% for f in formats %}<option value="{{ f }}" {% if format == f %}selected{% endif %}>{{ f|upper }}</option>{% endfor %}
+        </select>
+        <input type="hidden" name="folder" value="{{ folder }}">
+        <button type="submit">Search</button>
+      </form>
+    </div>
+    <div class="card">
+      <table>
+        <tr><th>Code</th><th>Document</th><th>Rev</th><th>Section / folder</th><th>Issued</th><th>Actions</th></tr>
+        {% for d in page %}
+        <tr class="doc-row" onclick="rowClicked(event, '{% url 'library:download' d.pk %}', {{ d.is_pdf|yesno:'true,false' }})">
+          <td class="code">{{ d.code }}</td>
+          <td>{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
+          <td>{{ d.revision }}</td>
+          <td style="color:var(--muted)">{{ d.section }} / {{ d.folder }}</td>
+          <td>{{ d.issue_date|date:"d/m/Y" }}</td>
+          <td class="actions" onclick="event.stopPropagation()">
+            {% if d.is_pdf %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁 Preview</button>{% endif %}
+            <a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener">↗ Open</a>
+            <a href="{% url 'library:download' d.pk %}?dl=1">⬇ Download</a>
+          </td>
+        </tr>
+        {% empty %}<tr><td colspan="6">No documents found.</td></tr>{% endfor %}
+      </table>
+      <p class="pag">
+        {% if page.has_previous %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
+        page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} documents)
+        {% if page.has_next %}<a href="?q={{ q }}&section={{ section }}&format={{ format }}&folder={{ folder }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <div class="agent-col">
+    <div class="card">
+      <div class="agent-head">
+        <h2>Ask the QMS Assistant</h2>
+        <p class="hint">Ask in plain language — it searches the library for you.</p>
+      </div>
+      <div id="chat-log" class="chat-log">
+        <div class="chat-msg bot">Hi! Ask me to find a document — e.g. "emergency contact procedure" or "2024 internal audit records" — and I'll dig through the library for you.</div>
+      </div>
+      <form id="chat-form" class="chat-form">
+        <input type="text" id="chat-input" placeholder="Ask a question…" autocomplete="off">
+        <button type="submit">Send</button>
+      </form>
+    </div>
+  </div>
 </div>
-<div class="card">
-  <table>
-    <tr><th>Code</th><th>Document</th><th>Rev</th><th>Section / folder</th><th>Issued</th><th></th></tr>
-    {% for d in page %}
-    <tr>
-      <td><b>{{ d.code }}</b></td>
-      <td>{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
-      <td>{{ d.revision }}</td>
-      <td style="color:var(--grey)">{{ d.section }} / {{ d.folder }}</td>
-      <td>{{ d.issue_date|date:"d/m/Y" }}</td>
-      <td><a href="{% url 'library:download' d.pk %}">open</a></td>
-    </tr>
-    {% empty %}<tr><td colspan="6">No documents found.</td></tr>{% endfor %}
-  </table>
-  <p class="pag">
-    {% if page.has_previous %}<a href="?q={{ q }}&section={{ section }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
-    page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} documents)
-    {% if page.has_next %}<a href="?q={{ q }}&section={{ section }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
-  </p>
+
+<div id="pdf-modal" class="modal" onclick="if(event.target===this) closePdfPreview()">
+  <div class="modal-box">
+    <div class="modal-bar"><span>Document preview</span><button type="button" class="modal-close" onclick="closePdfPreview()">Close ✕</button></div>
+    <iframe id="pdf-modal-frame" src="" style="width:100%;height:80vh;border:0;display:block"></iframe>
+  </div>
 </div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openPdfPreview(url) {
+  document.getElementById('pdf-modal-frame').src = url;
+  document.getElementById('pdf-modal').style.display = 'flex';
+}
+function closePdfPreview() {
+  document.getElementById('pdf-modal').style.display = 'none';
+  document.getElementById('pdf-modal-frame').src = '';
+}
+function rowClicked(e, url, isPdf) {
+  if (isPdf) { openPdfPreview(url); }
+  else { window.open(url, '_blank'); }
+}
+
+function getCookie(name) {
+  var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return m ? m.pop() : '';
+}
+function appendChatMsg(who, text, documents) {
+  var log = document.getElementById('chat-log');
+  var div = document.createElement('div');
+  div.className = 'chat-msg ' + who;
+  div.textContent = text;
+  log.appendChild(div);
+  (documents || []).forEach(function (d) {
+    var a = document.createElement('a');
+    a.href = d.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'chat-result';
+    a.textContent = (d.code ? d.code + ' — ' : '') + d.title;
+    log.appendChild(a);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+document.getElementById('chat-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var input = document.getElementById('chat-input');
+  var text = input.value.trim();
+  if (!text) return;
+  appendChatMsg('user', text);
+  input.value = '';
+  fetch("{% url 'library:assistant_ask' %}", {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+    body: JSON.stringify({ message: text }),
+  }).then(function (r) { return r.json(); }).then(function (data) {
+    appendChatMsg('bot', data.reply, data.documents || []);
+  }).catch(function () {
+    appendChatMsg('bot', 'Assistant is unavailable right now.', []);
+  });
+});
+</script>
 {% endblock %}
