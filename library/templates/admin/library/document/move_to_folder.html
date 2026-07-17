@@ -1,0 +1,20 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<p>Moving <b>{{ docs.count }}</b> document{{ docs.count|pluralize }} to a new folder:</p>
+<ul style="max-height:220px;overflow:auto;border:1px solid #ccc;border-radius:6px;padding:8px 20px;background:#fafafa">
+  {% for d in docs %}
+    <li>{{ d.title }} <span style="color:#999">— currently in {{ d.folder|default:"(no folder)" }}</span></li>
+  {% endfor %}
+</ul>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="ids" value="{{ ids }}">
+  {{ form.as_p }}
+  <div class="submit-row">
+    <input type="submit" value="Move" class="default">
+    <a href=".." style="margin-left:14px">Cancel</a>
+  </div>
+</form>
+{% endblock %}

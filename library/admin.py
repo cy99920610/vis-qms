@@ -2,9 +2,12 @@ import json
 
 from django import forms
 from django.contrib import admin
+from django.http import HttpResponseRedirect
+from django.shortcuts import render
+from django.urls import path
 from django.utils.safestring import mark_safe
 
-from .models import Document, DownloadLog, Section
+from .models import Document, DownloadLog, Section, section_choices
 from .views import build_folder_tree
 
 
@@ -182,6 +185,14 @@ class FolderPathWidget(forms.TextInput):
 """)
 
 
+def folder_section_mismatch_error(section, folder):
+    if section and folder and not (folder == section or folder.startswith(section + "\\")):
+        return (f'Folder must start with the chosen section\'s code ("{section}"), e.g. '
+                f'"{section}\\Some Subfolder" — otherwise the document won\'t appear under '
+                f'this section in the library tree.')
+    return None
+
+
 class DocumentAdminForm(forms.ModelForm):
     class Meta:
         model = Document
@@ -190,12 +201,21 @@ class DocumentAdminForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
-        section, folder = cleaned.get("section"), cleaned.get("folder")
-        if section and folder and not (folder == section or folder.startswith(section + "\\")):
-            self.add_error("folder",
-                f'Folder must start with the chosen section\'s code ("{section}"), e.g. '
-                f'"{section}\\Some Subfolder" — otherwise this document won\'t appear under '
-                f'this section in the library tree.')
+        error = folder_section_mismatch_error(cleaned.get("section"), cleaned.get("folder"))
+        if error:
+            self.add_error("folder", error)
+        return cleaned
+
+
+class MoveToFolderForm(forms.Form):
+    section = forms.ChoiceField(choices=section_choices, label="Section")
+    folder = forms.CharField(label="Folder", widget=FolderPathWidget)
+
+    def clean(self):
+        cleaned = super().clean()
+        error = folder_section_mismatch_error(cleaned.get("section"), cleaned.get("folder"))
+        if error:
+            self.add_error("folder", error)
         return cleaned
 
 
@@ -225,6 +245,7 @@ class DocumentAdmin(admin.ModelAdmin):
     list_editable = ("is_final",)
     date_hierarchy = "issue_date"
     filter_horizontal = ("hidden_from_groups",)
+    actions = ["move_to_folder"]
 
     @admin.display(description="Hidden from")
     def hidden_from(self, obj):
@@ -235,6 +256,47 @@ class DocumentAdmin(admin.ModelAdmin):
         if not obj.uploaded_by:
             obj.uploaded_by = request.user
         super().save_model(request, obj, form, change)
+
+    @admin.action(description="Move selected documents to a different folder…")
+    def move_to_folder(self, request, queryset):
+        ids = ",".join(str(pk) for pk in queryset.values_list("pk", flat=True))
+        return HttpResponseRedirect(f"move-to-folder/?ids={ids}")
+
+    def get_urls(self):
+        custom = [
+            path("move-to-folder/", self.admin_site.admin_view(self.move_to_folder_view),
+                 name="library_document_move_to_folder"),
+        ]
+        return custom + super().get_urls()
+
+    def move_to_folder_view(self, request):
+        ids = request.POST.get("ids") if request.method == "POST" else request.GET.get("ids", "")
+        pks = [int(pk) for pk in ids.split(",") if pk.isdigit()]
+        docs = Document.objects.filter(pk__in=pks)
+
+        if not docs:
+            self.message_user(request, "No documents were selected.", level="warning")
+            return HttpResponseRedirect("..")
+
+        if request.method == "POST":
+            form = MoveToFolderForm(request.POST)
+            if form.is_valid():
+                count = docs.update(section=form.cleaned_data["section"], folder=form.cleaned_data["folder"])
+                self.message_user(request, f'Moved {count} document(s) to "{form.cleaned_data["folder"]}".')
+                return HttpResponseRedirect("..")
+        else:
+            first = docs.first()
+            form = MoveToFolderForm(initial={"section": first.section, "folder": first.folder})
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Move documents to folder",
+            "form": form,
+            "docs": docs,
+            "ids": ids,
+            "opts": self.model._meta,
+        }
+        return render(request, "admin/library/document/move_to_folder.html", context)
 
 @admin.register(DownloadLog)
 class DownloadLogAdmin(admin.ModelAdmin):
