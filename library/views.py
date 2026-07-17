@@ -17,23 +17,41 @@ from .models import Document, DownloadLog, Section
 CONTENT_SEARCH_SCAN_LIMIT = 60
 
 
+def visible_sections(user):
+    """Sections this user's role is allowed to see at all — tree, dashboard,
+    section dropdown, and AI assistant. A Section hidden from one of the
+    user's groups (via Section.hidden_from_groups) is excluded entirely.
+    Management/superusers always see every section."""
+    qs = Section.objects.all()
+    if user.is_superuser or user.groups.filter(name="management").exists():
+        return qs
+    return qs.exclude(hidden_from_groups__in=user.groups.all()).distinct()
+
+
 def visible_documents(user):
     """Role-based visibility:
     - superuser / 'management' group: everything incl. drafts
-    - 'employee' and 'auditor' groups: final approved documents only
+    - 'employee' and 'auditor' groups: final approved documents only, and
+      never anything filed under a section hidden from one of their groups
     """
     qs = Document.objects.all()
     if user.is_superuser or user.groups.filter(name="management").exists():
         return qs
-    return qs.filter(is_final=True)
+    qs = qs.filter(is_final=True)
+    hidden_codes = Section.objects.filter(hidden_from_groups__in=user.groups.all()).values_list("code", flat=True)
+    if hidden_codes:
+        qs = qs.exclude(section__in=list(hidden_codes))
+    return qs
 
 
-def build_folder_tree(qs, current_folder=""):
-    """Build a nested folder tree (one root per Section) from a
-    role-filtered Document queryset. The tree always reflects the full
+def build_folder_tree(qs, sections, current_folder=""):
+    """Build a nested folder tree (one root per visible Section) from a
+    role-filtered Document queryset. `sections` is the (code, label) list
+    of sections this user is allowed to see at all — a hidden section gets
+    no root node, not just an empty one. The tree always reflects the full
     library structure visible to the user, independent of any active
     text/section search."""
-    sections = list(Section.objects.values_list("code", "label"))
+    sections = list(sections)
     folder_counts = Counter(qs.exclude(folder="").values_list("folder", flat=True))
 
     roots = {code: {"name": label, "path": code, "section_code": code,
@@ -95,7 +113,7 @@ def dashboard(request):
     qs = visible_documents(request.user)
     section_counts = [
         {"code": code, "label": label, "count": qs.filter(section=code).count()}
-        for code, label in Section.objects.values_list("code", "label")
+        for code, label in visible_sections(request.user).values_list("code", "label")
     ]
     recent = qs.order_by("-uploaded_at")[:8]
     return render(request, "library/dashboard.html", {
@@ -141,6 +159,7 @@ def search_document_contents(qs, keyword, limit=CONTENT_SEARCH_SCAN_LIMIT):
 @login_required
 def browse(request):
     base_qs = visible_documents(request.user)
+    user_sections = list(visible_sections(request.user).values_list("code", "label"))
     q = request.GET.get("q", "").strip()
     section = request.GET.get("section", "")
     folder = request.GET.get("folder", "").strip()
@@ -162,14 +181,13 @@ def browse(request):
     elif q:
         qs = qs.filter(Q(title__icontains=q) | Q(code__icontains=q) | Q(folder__icontains=q) | Q(notes__icontains=q))
 
-    tree = build_folder_tree(base_qs, current_folder=folder)
+    tree = build_folder_tree(base_qs, user_sections, current_folder=folder)
     formats = distinct_formats(base_qs)
 
     page = Paginator(qs, 50).get_page(request.GET.get("page"))
-    sections = Document._meta.get_field("section").choices
     return render(request, "library/browse.html", {
         "page": page, "q": q, "section": section, "folder": folder, "format": fmt,
-        "sections": sections, "formats": formats, "role": user_role(request.user), "tree": tree,
+        "sections": user_sections, "formats": formats, "role": user_role(request.user), "tree": tree,
         "content_search": content_search, "content_truncated": content_truncated,
         "content_scan_limit": CONTENT_SEARCH_SCAN_LIMIT,
     })

@@ -15,8 +15,7 @@ from django.db.models import Case, IntegerField, Q, Value, When
 from django.urls import reverse
 
 from .content import extract_document_text
-from .models import Section
-from .views import visible_documents
+from .views import visible_documents, visible_sections
 
 MODEL = "claude-haiku-4-5"
 MAX_TOOL_ITERATIONS = 4
@@ -42,9 +41,11 @@ SYSTEM_PROMPT = (
     "question instead of guessing."
 )
 
-def build_search_tool():
+def build_search_tool(user):
     """Rebuilt per call (not a frozen module-level constant) so a Section
-    added via admin is usable by the agent immediately, without a restart."""
+    added via admin is usable by the agent immediately, without a restart.
+    The section enum is scoped to this user's visible_sections(), so the
+    agent can't even suggest filtering by a section hidden from their role."""
     return {
         "name": "search_documents",
         "description": (
@@ -63,7 +64,7 @@ def build_search_tool():
                 },
                 "section": {
                     "type": "string",
-                    "enum": list(Section.objects.values_list("code", flat=True)),
+                    "enum": list(visible_sections(user).values_list("code", flat=True)),
                     "description": "Restrict results to one library section",
                 },
                 "folder_contains": {
@@ -176,7 +177,7 @@ def run_agent_turn(user, message, history):
     messages = list(history) + [{"role": "user", "content": message}]
     all_docs = {}
     response = None
-    tools = [build_search_tool(), READ_TOOL]
+    tools = [build_search_tool(user), READ_TOOL]
 
     for _ in range(MAX_TOOL_ITERATIONS):
         response = client.messages.create(

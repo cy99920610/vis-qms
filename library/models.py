@@ -1,6 +1,6 @@
 from django.db import models
 from django.db.utils import Error as DBError
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 
 
 class Section(models.Model):
@@ -12,6 +12,9 @@ class Section(models.Model):
         help_text="Must match the top-level folder name used by documents in this section, e.g. 06_OBSOLETE")
     label = models.CharField(max_length=100, help_text="Display name shown in the library tree and dropdowns, e.g. '06 Obsolete'")
     order = models.PositiveIntegerField(default=0, help_text="Display order, lowest first")
+    hidden_from_groups = models.ManyToManyField(Group, blank=True, related_name="hidden_sections",
+        help_text="Members of these groups (e.g. 'employee', 'auditor') won't see this section at all — "
+                   "not in the library tree, dashboard, section filter, or AI assistant. Management/superusers always see everything.")
 
     class Meta:
         ordering = ["order", "code"]

@@ -21,7 +21,8 @@ class FolderPathWidget(forms.TextInput):
                  "style": "width:100%;max-width:640px;background:#f3f3f3;font-family:monospace"}
         input_html = super().render(name, value, attrs, renderer)
 
-        tree = build_folder_tree(Document.objects.all())
+        all_sections = list(Section.objects.values_list("code", "label"))
+        tree = build_folder_tree(Document.objects.all(), all_sections)
         tree_json = json.dumps(tree).replace("</", "<\\/")
 
         return mark_safe(f"""
@@ -200,14 +201,20 @@ class DocumentAdminForm(forms.ModelForm):
 
 @admin.register(Section)
 class SectionAdmin(admin.ModelAdmin):
-    list_display = ("order", "code", "label", "document_count")
+    list_display = ("order", "code", "label", "document_count", "hidden_from")
     list_display_links = ("code",)
     list_editable = ("order", "label")
     ordering = ("order", "code")
+    filter_horizontal = ("hidden_from_groups",)
 
     @admin.display(description="Documents")
     def document_count(self, obj):
         return Document.objects.filter(section=obj.code).count()
+
+    @admin.display(description="Hidden from")
+    def hidden_from(self, obj):
+        names = [g.name for g in obj.hidden_from_groups.all()]
+        return ", ".join(names) if names else "—"
 
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
