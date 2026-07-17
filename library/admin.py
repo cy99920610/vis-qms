@@ -219,11 +219,17 @@ class SectionAdmin(admin.ModelAdmin):
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     form = DocumentAdminForm
-    list_display = ("code", "title", "revision", "section", "folder", "issue_date", "is_final", "updated_at")
-    list_filter = ("section", "is_final")
+    list_display = ("code", "title", "revision", "section", "folder", "issue_date", "is_final", "hidden_from", "updated_at")
+    list_filter = ("section", "is_final", "hidden_from_groups")
     search_fields = ("title", "code", "folder", "notes")
     list_editable = ("is_final",)
     date_hierarchy = "issue_date"
+    filter_horizontal = ("hidden_from_groups",)
+
+    @admin.display(description="Hidden from")
+    def hidden_from(self, obj):
+        names = [g.name for g in obj.hidden_from_groups.all()]
+        return ", ".join(names) if names else "—"
 
     def save_model(self, request, obj, form, change):
         if not obj.uploaded_by:

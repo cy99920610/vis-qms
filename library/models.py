@@ -48,6 +48,9 @@ class Document(models.Model):
     uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    hidden_from_groups = models.ManyToManyField(Group, blank=True, related_name="hidden_documents",
+        help_text="Members of these groups won't see this specific document — in the library, search, "
+                   "or AI assistant — even if its section is otherwise visible to them. Management/superusers always see everything.")
 
     class Meta:
         ordering = ["section", "folder", "title"]

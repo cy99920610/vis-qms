@@ -31,8 +31,9 @@ def visible_sections(user):
 def visible_documents(user):
     """Role-based visibility:
     - superuser / 'management' group: everything incl. drafts
-    - 'employee' and 'auditor' groups: final approved documents only, and
-      never anything filed under a section hidden from one of their groups
+    - 'employee' and 'auditor' groups: final approved documents only, never
+      anything filed under a section hidden from one of their groups, and
+      never an individual document hidden from one of their groups
     """
     qs = Document.objects.all()
     if user.is_superuser or user.groups.filter(name="management").exists():
@@ -41,7 +42,7 @@ def visible_documents(user):
     hidden_codes = Section.objects.filter(hidden_from_groups__in=user.groups.all()).values_list("code", flat=True)
     if hidden_codes:
         qs = qs.exclude(section__in=list(hidden_codes))
-    return qs
+    return qs.exclude(hidden_from_groups__in=user.groups.all())
 
 
 def build_folder_tree(qs, sections, current_folder=""):
