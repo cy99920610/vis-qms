@@ -15,7 +15,7 @@ from django.db.models import Case, IntegerField, Q, Value, When
 from django.urls import reverse
 
 from .content import extract_document_text
-from .views import visible_documents, visible_sections
+from .views import can_preview_format, file_ext, visible_documents, visible_sections
 
 MODEL = "claude-haiku-4-5"
 MAX_TOOL_ITERATIONS = 4
@@ -144,10 +144,18 @@ def search_documents_tool(user, keywords="", section="", folder_contains=""):
 
 
 def read_document_tool(user, document_id):
-    """Enforces access control: only documents visible to this user can be read."""
+    """Enforces access control: only documents visible to this user can be
+    read, and only in a format their role is allowed to preview — the agent
+    must never expose content the person couldn't open themselves."""
     doc = visible_documents(user).filter(pk=document_id).first()
     if not doc:
         return {"error": "Document not found or not accessible."}
+
+    if not can_preview_format(user, file_ext(doc)):
+        return {
+            "id": doc.pk, "title": doc.title, "code": doc.code,
+            "error": "This document's format isn't accessible to your role — direct the person to a QMS Manager.",
+        }
 
     text = extract_document_text(doc)
     if text is None:

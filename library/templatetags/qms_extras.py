@@ -14,3 +14,15 @@ def get_item(mapping, key):
 def join_titles(tasks):
     """Semicolon-joined task titles, for a day cell's hover tooltip."""
     return "; ".join(t.title for t in tasks)
+
+
+@register.filter
+def ext_in(document, allowed_formats):
+    """True if `document`'s file extension is in `allowed_formats` (a set
+    computed once per request — see views.get_access_context). None means
+    unrestricted (management/superuser)."""
+    if allowed_formats is None:
+        return True
+    name = document.file.name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return ext in allowed_formats

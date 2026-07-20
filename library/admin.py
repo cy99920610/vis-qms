@@ -7,7 +7,10 @@ from django.shortcuts import render
 from django.urls import path
 from django.utils.safestring import mark_safe
 
-from .models import Document, DownloadLog, QMSTask, QMSTaskTemplate, Section, section_choices
+from .models import (
+    Document, DownloadLog, FORMAT_CHOICES, QMSTask, QMSTaskTemplate,
+    RoleAccessProfile, Section, section_choices,
+)
 from .views import build_folder_tree
 
 
@@ -217,6 +220,62 @@ class MoveToFolderForm(forms.Form):
         if error:
             self.add_error("folder", error)
         return cleaned
+
+
+class RoleAccessProfileForm(forms.ModelForm):
+    """The model stores allowed formats as a comma-separated CharField (kept
+    portable — no Postgres-only ArrayField); this form presents them as
+    checkboxes and converts both ways."""
+    allowed_preview_formats = forms.MultipleChoiceField(
+        choices=FORMAT_CHOICES, widget=forms.CheckboxSelectMultiple, required=False,
+        help_text="Formats this role may preview/open in-browser.")
+    allowed_download_formats = forms.MultipleChoiceField(
+        choices=FORMAT_CHOICES, widget=forms.CheckboxSelectMultiple, required=False,
+        help_text="Formats this role may download.")
+
+    class Meta:
+        model = RoleAccessProfile
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields["allowed_preview_formats"].initial = self.instance.preview_formats_list()
+            self.fields["allowed_download_formats"].initial = self.instance.download_formats_list()
+
+    def clean_allowed_preview_formats(self):
+        return ",".join(self.cleaned_data["allowed_preview_formats"])
+
+    def clean_allowed_download_formats(self):
+        return ",".join(self.cleaned_data["allowed_download_formats"])
+
+
+@admin.register(RoleAccessProfile)
+class RoleAccessProfileAdmin(admin.ModelAdmin):
+    form = RoleAccessProfileForm
+    list_display = ("get_role_display_", "allowed_preview_formats", "allowed_download_formats",
+                     "can_view_draft_documents", "can_view_source_editable_files",
+                     "can_view_obsolete_documents", "can_view_internal_notes",
+                     "can_view_external_auditor_package_only")
+    fieldsets = (
+        (None, {"fields": ("role",)}),
+        ("Format access", {"fields": ("allowed_preview_formats", "allowed_download_formats")}),
+        ("Visibility", {"fields": ("can_view_draft_documents", "can_view_source_editable_files",
+                                    "can_view_obsolete_documents", "can_view_internal_notes",
+                                    "can_view_external_auditor_package_only")}),
+    )
+
+    def has_add_permission(self, request):
+        # Exactly one profile per role — the four rows are seeded by migration
+        # and auto-created on first access; admins edit, they don't add more.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="Role")
+    def get_role_display_(self, obj):
+        return obj.get_role_display()
 
 
 @admin.register(Section)

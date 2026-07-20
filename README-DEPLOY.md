@@ -152,3 +152,60 @@ assigned users can update their own tasks (status, notes, evidence, mark complet
 **Not yet implemented:** email reminders. The `reminder_days_before` field is in place
 on every task so this is a follow-up, not a redesign, once an email backend is
 configured in `settings.py`.
+
+---
+
+## 9. Role-based document format access control
+
+Beyond the final/draft split above, each role also has fine-grained control over which
+**file formats** it may preview or download, and whether it can see drafts,
+source-editable files, obsolete documents, and internal notes. This is enforced in the
+**backend** (the `download()` view and `visible_documents()`), not just hidden in the UI —
+a denied request gets an HTTP 403 with "You do not have permission to access this
+document format." even if someone guesses the direct URL.
+
+**Where to configure it:** Admin → QMS Document Library → **Role access profiles**.
+One row per role (`employee`, `auditor`, `internal_auditor`, `management`) — rows are
+seeded automatically by migration and cannot be added/deleted, only edited.
+
+- **Format access** — tick the file formats (PDF/DOCX/XLSX/DOC/XLS/TXT/MD/CSV) that role
+  may **preview** (open in-browser/new tab) and **download** separately.
+- **Visibility** — toggle whether the role can see draft documents, source-editable
+  files/folders, obsolete documents, internal notes, and whether it's restricted to an
+  "external auditor package" view (hides anything in an unsorted/duplicate folder or title).
+
+**Defaults out of the box:**
+| Role | Preview/Download formats | Drafts | Source-editable | Obsolete | Internal notes |
+|---|---|---|---|---|---|
+| Employee | PDF only | No | No | No | Yes |
+| External Auditor (`auditor` group) | PDF only | No | No | No | No |
+| Internal Auditor (`internal_auditor` group) | PDF, XLSX | No | No | No | Yes |
+| QMS Manager / Admin (`management` group, or superuser) | All 8 formats | Yes | Yes | Yes | Yes |
+
+**To make an employee PDF-only** (already the default): Admin → Role access profiles →
+**Employee** → confirm only *PDF* is ticked under both Format access fields → Save.
+
+**To give auditors PDF + Excel access:** decide which group they should sit in —
+`auditor` (external, package-only view) or `internal_auditor` (full document set, no
+package restriction) — then Admin → Role access profiles → open that role's row → tick
+*XLSX* in both "Allowed preview formats" and "Allowed download formats" → Save. Takes
+effect immediately for every user in that group, no redeploy needed.
+
+**To test that drafts/source-editable files are hidden:** log in as (or create a test
+account in) the `employee` or `auditor` group and browse the library — draft documents
+and anything under a `source-editable`/`editable` folder should not appear in the list at
+all (not just be greyed out), and non-PDF rows show a grey "Restricted format" badge
+instead of preview/download icons. Superusers and the `management` group always see and
+open everything, regardless of these settings — this cannot be restricted, by design, so
+the admin account is never locked out.
+
+Assigning a user to the `internal_auditor` group (Admin → Users → edit user → Groups) is
+how you distinguish an internal QMS auditor (broader access) from an external
+certification-body auditor (`auditor` group, package-only). Run `python manage.py
+init_roles` once after upgrading to create the `internal_auditor` group if it doesn't
+exist yet — safe to re-run, it's idempotent.
+
+The AI Assistant respects the same rules: if a user asks it to open a document whose
+format they're not allowed to access, it tells them to contact a QMS Manager instead of
+showing the content — the assistant's document-reading tool is gated by the same
+permission check as the browse/download views.

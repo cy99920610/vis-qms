@@ -1,4 +1,5 @@
 {% extends "library/base.html" %}
+{% load qms_extras %}
 {% block content %}
 <div class="rolebar">Role: <b>{{ role }}</b>{% if role != "management" %} — you see final approved documents only{% endif %}</div>
 
@@ -59,18 +60,23 @@
       <table class="doc-table">
         <tr><th class="c-doc">Document</th><th class="c-folder">Folder</th><th class="c-issued">Issued</th><th class="c-actions">Actions</th></tr>
         {% for d in page %}
-        <tr class="doc-row" onclick="rowClicked(event, '{% url 'library:download' d.pk %}', {{ d.is_pdf|yesno:'true,false' }})">
-          <td class="c-doc">{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}</td>
+        {% with can_prev=d|ext_in:preview_formats can_dl=d|ext_in:download_formats %}
+        <tr class="doc-row" {% if can_prev %}onclick="rowClicked(event, '{% url 'library:download' d.pk %}', {{ d.is_pdf|yesno:'true,false' }})"{% endif %}>
+          <td class="c-doc">{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}
+            {% if d.notes and can_view_notes %}<div class="hint" style="margin-top:2px">{{ d.notes }}</div>{% endif %}
+          </td>
           <td class="c-folder" style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ d.folder }}">{{ d.folder }}</td>
           <td class="c-issued">{{ d.issue_date|date:"d/m/Y" }}</td>
           <td class="c-actions" onclick="event.stopPropagation()">
             <span class="actions">
-              {% if d.is_pdf %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁</button>{% endif %}
-              <a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener" title="Open">↗</a>
-              <a href="{% url 'library:download' d.pk %}?dl=1" title="Download">⬇</a>
+              {% if d.is_pdf and can_prev %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁</button>{% endif %}
+              {% if can_prev %}<a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener" title="Open">↗</a>{% endif %}
+              {% if can_dl %}<a href="{% url 'library:download' d.pk %}?dl=1" title="Download">⬇</a>{% endif %}
+              {% if not can_prev and not can_dl %}<span class="qms-badge qms-grey" title="You do not have permission to access this document format.">Restricted format</span>{% endif %}
             </span>
           </td>
         </tr>
+        {% endwith %}
         {% empty %}<tr><td colspan="4">No documents found.</td></tr>{% endfor %}
       </table>
       </div>

@@ -18,7 +18,8 @@ from django.views.decorators.http import require_POST
 
 from .content import extract_document_text
 from .models import (
-    Document, DownloadLog, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask, Section,
+    Document, DownloadLog, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask,
+    RoleAccessProfile, ROLE_PROFILE_DEFAULTS, Section,
 )
 
 CONTENT_SEARCH_SCAN_LIMIT = 60
@@ -38,18 +39,78 @@ def visible_sections(user):
 def visible_documents(user):
     """Role-based visibility:
     - superuser / 'management' group: everything incl. drafts
-    - 'employee' and 'auditor' groups: final approved documents only, never
-      anything filed under a section hidden from one of their groups, and
-      never an individual document hidden from one of their groups
+    - everyone else: gated by their RoleAccessProfile (draft / source-editable /
+      obsolete / external-auditor-package-only), never anything filed under a
+      section hidden from one of their groups, and never an individual
+      document hidden from one of their groups
     """
     qs = Document.objects.all()
     if user.is_superuser or user.groups.filter(name="management").exists():
         return qs
-    qs = qs.filter(is_final=True)
+
+    profile = get_role_profile(user)
+    if not profile.can_view_draft_documents:
+        qs = qs.filter(is_final=True)
+    if not profile.can_view_source_editable_files:
+        qs = qs.exclude(folder__icontains="source-editable").exclude(folder__icontains="editable")
+    if not profile.can_view_obsolete_documents:
+        qs = qs.exclude(folder__icontains="obsolete").exclude(section="06_OBSOLETE")
+    if profile.can_view_external_auditor_package_only:
+        qs = (qs.exclude(folder__icontains="unsorted").exclude(folder__icontains="duplicate")
+                .exclude(title__icontains="unsorted").exclude(title__icontains="duplicate"))
+
     hidden_codes = Section.objects.filter(hidden_from_groups__in=user.groups.all()).values_list("code", flat=True)
     if hidden_codes:
         qs = qs.exclude(section__in=list(hidden_codes))
     return qs.exclude(hidden_from_groups__in=user.groups.all())
+
+
+def get_role_profile(user):
+    """The RoleAccessProfile row for this user's role, auto-created with
+    conservative defaults on first access (see ROLE_PROFILE_DEFAULTS) so the
+    feature works even before an admin has visited the Role Access Profiles
+    admin page."""
+    role = user_role(user)
+    profile, _ = RoleAccessProfile.objects.get_or_create(role=role, defaults=ROLE_PROFILE_DEFAULTS.get(role, {}))
+    return profile
+
+
+def get_access_context(user):
+    """(preview_formats, download_formats, profile) — the two format sets are
+    None for management/superuser (unrestricted); profile is None too, since
+    there's nothing to check. Compute once per request and reuse — avoids a
+    profile fetch (or, worse, N+1 queries) per document row in a template."""
+    if user.is_superuser or user.groups.filter(name="management").exists():
+        return None, None, None
+    profile = get_role_profile(user)
+    return profile.preview_formats_set(), profile.download_formats_set(), profile
+
+
+def file_ext(doc):
+    name = doc.file.name
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def can_preview_format(user, ext):
+    preview_formats, _, _ = get_access_context(user)
+    return preview_formats is None or ext.lower() in preview_formats
+
+
+def can_download_format(user, ext):
+    _, download_formats, _ = get_access_context(user)
+    return download_formats is None or ext.lower() in download_formats
+
+
+def doc_is_openable(user, doc):
+    """Combined visibility + preview-format check for a single document
+    reference shown outside the main browse listing (e.g. a QMSTask's
+    related/evidence document), which isn't already pre-filtered through
+    visible_documents()."""
+    if doc is None:
+        return False
+    if not visible_documents(user).filter(pk=doc.pk).exists():
+        return False
+    return can_preview_format(user, file_ext(doc))
 
 
 def build_folder_tree(qs, sections, current_folder=""):
@@ -111,6 +172,8 @@ def build_folder_tree(qs, sections, current_folder=""):
 def user_role(user):
     if user.is_superuser or user.groups.filter(name="management").exists():
         return "management"
+    if user.groups.filter(name="internal_auditor").exists():
+        return "internal_auditor"
     if user.groups.filter(name="auditor").exists():
         return "auditor"
     return "employee"
@@ -206,6 +269,7 @@ def browse(request):
 
     tree = build_folder_tree(base_qs, user_sections, current_folder=folder)
     formats = distinct_formats(base_qs)
+    preview_formats, download_formats, access_profile = get_access_context(request.user)
 
     page = Paginator(qs, 50).get_page(request.GET.get("page"))
     return render(request, "library/browse.html", {
@@ -213,6 +277,8 @@ def browse(request):
         "sections": user_sections, "formats": formats, "role": user_role(request.user), "tree": tree,
         "content_search": content_search, "content_truncated": content_truncated,
         "content_scan_limit": CONTENT_SEARCH_SCAN_LIMIT,
+        "preview_formats": preview_formats, "download_formats": download_formats,
+        "can_view_notes": access_profile.can_view_internal_notes if access_profile else True,
     })
 
 
@@ -222,8 +288,14 @@ def download(request, pk):
     doc = get_object_or_404(Document, pk=pk)
     if doc not in visible_documents(request.user):
         return HttpResponseForbidden("This document is not available for your role.")
-    DownloadLog.objects.create(document=doc, user=request.user)
+
     force_download = request.GET.get("dl") == "1"
+    ext = file_ext(doc)
+    allowed = can_download_format(request.user, ext) if force_download else can_preview_format(request.user, ext)
+    if not allowed:
+        return HttpResponseForbidden("You do not have permission to access this document format.")
+
+    DownloadLog.objects.create(document=doc, user=request.user)
     return FileResponse(doc.file.open("rb"), as_attachment=force_download, filename=doc.file.name.split("/")[-1])
 
 
@@ -410,6 +482,8 @@ def qms_task_detail(request, pk):
     return render(request, "library/qms_task_detail.html", {
         "task": task, "can_edit": can_edit, "role": user_role(request.user),
         "status_choices": QMS_STATUS_CHOICES, "evidence_options": evidence_options,
+        "related_doc_openable": doc_is_openable(request.user, task.related_document),
+        "evidence_doc_openable": doc_is_openable(request.user, task.evidence_document),
     })
 
 

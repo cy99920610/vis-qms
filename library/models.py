@@ -67,6 +67,95 @@ class Document(models.Model):
         return self.file.name.lower().endswith(".pdf")
 
 
+ROLE_CHOICES = [
+    ("employee", "Employee"),
+    ("auditor", "External Auditor"),
+    ("internal_auditor", "Internal Auditor"),
+    ("management", "QMS Manager / Admin"),
+]
+
+FORMAT_CHOICES = [
+    ("pdf", "PDF"), ("docx", "DOCX"), ("xlsx", "XLSX"), ("doc", "DOC"),
+    ("xls", "XLS"), ("txt", "TXT"), ("md", "MD"), ("csv", "CSV"),
+]
+
+# Single source of truth for the profile a role gets the first time it's
+# looked up (views.get_role_profile) and for the data migration that seeds
+# the admin list. Deliberately conservative — nothing here is looser than
+# the hardcoded behaviour that existed before this feature.
+ROLE_PROFILE_DEFAULTS = {
+    "employee": dict(
+        allowed_preview_formats="pdf", allowed_download_formats="pdf",
+        can_view_draft_documents=False, can_view_source_editable_files=False,
+        can_view_obsolete_documents=False, can_view_internal_notes=True,
+        can_view_external_auditor_package_only=False,
+    ),
+    "auditor": dict(
+        allowed_preview_formats="pdf", allowed_download_formats="pdf",
+        can_view_draft_documents=False, can_view_source_editable_files=False,
+        can_view_obsolete_documents=False, can_view_internal_notes=False,
+        can_view_external_auditor_package_only=True,
+    ),
+    "internal_auditor": dict(
+        allowed_preview_formats="pdf,xlsx", allowed_download_formats="pdf,xlsx",
+        can_view_draft_documents=False, can_view_source_editable_files=False,
+        can_view_obsolete_documents=False, can_view_internal_notes=True,
+        can_view_external_auditor_package_only=False,
+    ),
+    "management": dict(
+        allowed_preview_formats="pdf,docx,xlsx,doc,xls,txt,md,csv",
+        allowed_download_formats="pdf,docx,xlsx,doc,xls,txt,md,csv",
+        can_view_draft_documents=True, can_view_source_editable_files=True,
+        can_view_obsolete_documents=True, can_view_internal_notes=True,
+        can_view_external_auditor_package_only=False,
+    ),
+}
+
+
+class RoleAccessProfile(models.Model):
+    """Per-role document-format and visibility permissions. `role` matches
+    the values returned by views.user_role(). Management/superusers always
+    bypass this model entirely (hard-coded in views.py) — it only ever
+    constrains employee / auditor / internal_auditor."""
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, unique=True)
+    allowed_preview_formats = models.CharField(max_length=200, blank=True,
+        help_text="Comma-separated file extensions this role may preview/open in-browser, e.g. pdf,xlsx")
+    allowed_download_formats = models.CharField(max_length=200, blank=True,
+        help_text="Comma-separated file extensions this role may download, e.g. pdf,xlsx")
+    can_view_draft_documents = models.BooleanField(default=False)
+    can_view_source_editable_files = models.BooleanField(default=False,
+        help_text="Folders whose path contains 'source-editable' or 'editable'")
+    can_view_obsolete_documents = models.BooleanField(default=False,
+        help_text="The 06 Obsolete section, or any folder whose path contains 'obsolete'")
+    can_view_internal_notes = models.BooleanField(default=True)
+    can_view_external_auditor_package_only = models.BooleanField(default=False,
+        help_text="Extra lockdown for this role: also hide unsorted/duplicate-review records, "
+                   "regardless of the flags above.")
+
+    class Meta:
+        ordering = ["role"]
+        verbose_name = "Role access profile"
+
+    def __str__(self):
+        return self.get_role_display()
+
+    @staticmethod
+    def _parse(raw):
+        return {f.strip().lower() for f in raw.split(",") if f.strip()}
+
+    def preview_formats_set(self):
+        return self._parse(self.allowed_preview_formats)
+
+    def download_formats_set(self):
+        return self._parse(self.allowed_download_formats)
+
+    def preview_formats_list(self):
+        return sorted(self.preview_formats_set())
+
+    def download_formats_list(self):
+        return sorted(self.download_formats_set())
+
+
 class DownloadLog(models.Model):
     """Audit trail: who accessed which document, when (useful evidence for BV)."""
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="downloads")
