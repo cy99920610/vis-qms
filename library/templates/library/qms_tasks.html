@@ -1,0 +1,67 @@
+{% extends "library/base.html" %}
+{% block title %}QMS Tasks{% endblock %}
+{% block content %}
+<div class="rolebar">Role: <b>{{ role }}</b></div>
+
+<div class="qms-stat-row">
+  <div class="stat-card total"><div class="n">{{ total_count }}</div><div class="l">Matching tasks</div></div>
+  <div class="stat-card"><div class="n">{{ open_count }}</div><div class="l">Open</div></div>
+  <div class="stat-card"><div class="n">{{ overdue_count }}</div><div class="l">Overdue</div></div>
+  <div class="stat-card"><div class="n">{{ completed_count }}</div><div class="l">Completed</div></div>
+</div>
+
+<div class="card">
+  <h2>By category</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">
+    {% for label, count in by_category %}<span class="qms-badge qms-grey">{{ label }}: {{ count }}</span>{% empty %}<span class="qms-widget-empty">No tasks yet.</span>{% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <form class="qms-filter-form" method="get">
+    <select name="category">
+      <option value="">All categories</option>
+      {% for val,label in category_choices %}<option value="{{ val }}" {% if category == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <select name="status">
+      <option value="">All statuses</option>
+      {% for val,label in status_choices %}<option value="{{ val }}" {% if status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      <option value="overdue" {% if status == "overdue" %}selected{% endif %}>Overdue</option>
+      <option value="due_soon" {% if status == "due_soon" %}selected{% endif %}>Due Soon</option>
+    </select>
+    <select name="responsible">
+      <option value="">Anyone responsible</option>
+      {% for u in responsible_choices %}<option value="{{ u.id }}" {% if responsible == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username }}</option>{% endfor %}
+    </select>
+    <select name="entity">
+      <option value="">All entities</option>
+      {% for e in entity_choices %}<option value="{{ e }}" {% if entity == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+    </select>
+    <input type="text" name="iso_clause" value="{{ iso_clause }}" placeholder="ISO clause…" style="width:120px">
+    <button type="submit">Filter</button>
+    <a href="{% url 'library:qms_tasks' %}" style="font-size:12px;color:var(--muted)">Clear</a>
+  </form>
+</div>
+
+<div class="card">
+  <div class="table-scroll">
+  <table class="doc-table">
+    <tr><th class="c-doc">Task</th><th class="c-folder">Category / Entity</th><th class="c-issued">Due</th><th class="c-rev">Priority</th><th class="c-actions">Status</th></tr>
+    {% for t in page %}
+    <tr class="doc-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
+      <td class="c-doc">{{ t.title }}{% if t.responsible_person %} <span style="color:var(--faint);font-size:12px">— {{ t.responsible_person.get_full_name|default:t.responsible_person.username }}</span>{% endif %}</td>
+      <td class="c-folder">{{ t.get_category_display }}{% if t.entity %} · {{ t.entity }}{% endif %}</td>
+      <td class="c-issued">{{ t.due_date|date:"d M Y" }}</td>
+      <td class="c-rev">{{ t.get_priority_display }}</td>
+      <td class="c-actions"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+    </tr>
+    {% empty %}<tr><td colspan="5">No QMS tasks match these filters.</td></tr>{% endfor %}
+  </table>
+  </div>
+  <p class="pag">
+    {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">&laquo; prev</a>{% endif %}
+    page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} tasks)
+    {% if page.has_next %}<a href="?page={{ page.next_page_number }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">next &raquo;</a>{% endif %}
+  </p>
+</div>
+{% endblock %}

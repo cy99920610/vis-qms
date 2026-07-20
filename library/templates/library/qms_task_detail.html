@@ -1,0 +1,85 @@
+{% extends "library/base.html" %}
+{% block title %}{{ task.title }}{% endblock %}
+{% block content %}
+<p><a href="{% url 'library:qms_tasks' %}" style="font-size:12.5px">&laquo; All QMS tasks</a></p>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
+    <div>
+      <h2 style="margin-bottom:4px">{{ task.title }}</h2>
+      <span class="qms-badge qms-{{ task.status_color }}">{{ task.display_status_label }}</span>
+      <span class="qms-badge qms-grey">{{ task.get_priority_display }} priority</span>
+      {% if not can_edit %}<span class="qms-badge qms-grey">Read-only</span>{% endif %}
+    </div>
+  </div>
+
+  {% if task.description %}<p class="hint" style="margin-top:10px">{{ task.description|linebreaksbr }}</p>{% endif %}
+
+  <dl class="qms-detail-grid">
+    <div><dt>Category</dt><dd>{{ task.get_category_display }}</dd></div>
+    <div><dt>Process</dt><dd>{{ task.process|default:"—" }}</dd></div>
+    <div><dt>ISO 9001 clause</dt><dd>{{ task.iso_clause|default:"—" }}</dd></div>
+    <div><dt>Entity/Branch</dt><dd>{{ task.entity|default:"—" }}</dd></div>
+    <div><dt>Related document</dt>
+      <dd>{% if task.related_document %}<a href="{% url 'library:download' task.related_document.pk %}" target="_blank" rel="noopener">{{ task.related_document.code }}{% if task.related_document.code %} — {% endif %}{{ task.related_document.title }}</a>{% else %}—{% endif %}</dd></div>
+    <div><dt>Responsible person</dt><dd>{% if task.responsible_person %}{{ task.responsible_person.get_full_name|default:task.responsible_person.username }}{% else %}—{% endif %}</dd></div>
+    <div><dt>Assigned to</dt><dd>{% for u in task.assigned_users.all %}{{ u.get_full_name|default:u.username }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</dd></div>
+    <div><dt>Start date</dt><dd>{{ task.start_date|date:"d M Y"|default:"—" }}</dd></div>
+    <div><dt>Due date</dt><dd>{{ task.due_date|date:"d M Y" }}</dd></div>
+    <div><dt>Completion date</dt><dd>{{ task.completion_date|date:"d M Y"|default:"—" }}</dd></div>
+    <div><dt>Recurrence</dt><dd>{{ task.get_recurrence_type_display }}{% if task.template.recurrence_rule %} ({{ task.template.get_recurrence_rule_display }}){% endif %}</dd></div>
+    <div><dt>Reminder</dt><dd>{{ task.reminder_days_before }} day(s) before due date</dd></div>
+    <div><dt>Evidence required</dt><dd>{{ task.evidence_required|yesno:"Yes,No" }}</dd></div>
+    <div><dt>Evidence</dt>
+      <dd>{% if task.evidence_document %}<a href="{% url 'library:download' task.evidence_document.pk %}" target="_blank" rel="noopener">{{ task.evidence_document.code }}{% if task.evidence_document.code %} — {% endif %}{{ task.evidence_document.title }}</a>{% else %}—{% endif %}</dd></div>
+  </dl>
+
+  {% if task.notes %}<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Notes</div><p>{{ task.notes|linebreaksbr }}</p></div>{% endif %}
+  {% if task.completion_notes %}<div><div style="font-size:11px;color:var(--muted);text-transform:uppercase">Completion notes</div><p>{{ task.completion_notes|linebreaksbr }}</p></div>{% endif %}
+</div>
+
+{% if can_edit %}
+<div class="card">
+  <h2>Update task</h2>
+  <form method="post">
+    {% csrf_token %}
+    <p>
+      <label>Status<br>
+        <select name="status">
+          {% for val,label in status_choices %}<option value="{{ val }}" {% if task.status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+    </p>
+    <p>
+      <label>Notes<br>
+        <textarea name="notes" rows="3" style="width:100%;max-width:520px">{{ task.notes }}</textarea>
+      </label>
+    </p>
+    {% if evidence_options %}
+    <p>
+      <label>Link evidence document<br>
+        <select name="evidence_document" style="max-width:520px">
+          <option value="">— none —</option>
+          {% for d in evidence_options %}<option value="{{ d.pk }}" {% if task.evidence_document_id == d.pk %}selected{% endif %}>{{ d.code }}{% if d.code %} — {% endif %}{{ d.title }}</option>{% endfor %}
+        </select>
+      </label>
+    </p>
+    {% endif %}
+    <button type="submit">Save changes</button>
+  </form>
+
+  {% if task.status != "completed" %}
+  <form method="post" style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="mark_completed">
+    <p>
+      <label>Completion notes (optional)<br>
+        <textarea name="completion_notes" rows="2" style="width:100%;max-width:520px" placeholder="What was done / evidence summary…"></textarea>
+      </label>
+    </p>
+    <button type="submit" style="background:#1E7A46;border-color:#1E7A46">Mark completed{% if task.recurrence_type != "none" %} (creates next occurrence){% endif %}</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

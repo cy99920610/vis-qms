@@ -1,0 +1,95 @@
+{% extends "library/base.html" %}
+{% load qms_extras %}
+{% block title %}QMS Calendar{% endblock %}
+{% block content %}
+<div class="rolebar">Role: <b>{{ role }}</b></div>
+
+<div class="card">
+  <div class="qms-toolbar">
+    <div class="qms-view-tabs">
+      <a href="{% querystring view="month" %}" class="{% if view == 'month' %}active{% endif %}">Month</a>
+      <a href="{% querystring view="week" %}" class="{% if view == 'week' %}active{% endif %}">Week</a>
+      <a href="{% querystring view="list" %}" class="{% if view == 'list' %}active{% endif %}">List</a>
+    </div>
+    <form class="qms-filter-form" method="get">
+      <input type="hidden" name="view" value="{{ view }}">
+      <select name="category">
+        <option value="">All categories</option>
+        {% for val,label in category_choices %}<option value="{{ val }}" {% if category == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <select name="status">
+        <option value="">All statuses</option>
+        {% for val,label in status_choices %}<option value="{{ val }}" {% if status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        <option value="overdue" {% if status == "overdue" %}selected{% endif %}>Overdue</option>
+        <option value="due_soon" {% if status == "due_soon" %}selected{% endif %}>Due Soon</option>
+      </select>
+      <select name="responsible">
+        <option value="">Anyone responsible</option>
+        {% for u in responsible_choices %}<option value="{{ u.id }}" {% if responsible == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username }}</option>{% endfor %}
+      </select>
+      <select name="entity">
+        <option value="">All entities</option>
+        {% for e in entity_choices %}<option value="{{ e }}" {% if entity == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      </select>
+      <input type="text" name="iso_clause" value="{{ iso_clause }}" placeholder="ISO clause…" style="width:120px">
+      <button type="submit">Filter</button>
+      <a href="{% url 'library:qms_calendar' %}?view={{ view }}" style="font-size:12px;color:var(--muted)">Clear</a>
+    </form>
+  </div>
+
+  {% if view == "month" %}
+    <div class="qms-cal-nav">
+      <a href="?view=month&year={{ prev_year }}&month={{ prev_month }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">&laquo; prev</a>
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="?view=month&year={{ next_year }}&month={{ next_month }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">next &raquo;</a>
+    </div>
+    <div class="table-scroll">
+    <table class="qms-month-table">
+      <tr><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Sun</th></tr>
+      {% for week in weeks %}
+      <tr>
+        {% for day in week %}
+        <td class="{% if day.month != month %}other-month{% endif %} {% if day == today %}today{% endif %}">
+          <span class="qms-day-num">{{ day.day }}</span>
+          {% for t in tasks_by_day|get_item:day %}
+            <a class="qms-chip qc-{{ t.status_color }}" href="{% url 'library:qms_task_detail' t.pk %}" title="{{ t.title }}">{{ t.title }}</a>
+          {% endfor %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+  {% elif view == "week" %}
+    <div class="qms-cal-nav">
+      <a href="?view=week&start={{ prev_start }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">&laquo; prev week</a>
+      <h2>Week of {{ days.0|date:"d M Y" }}</h2>
+      <a href="?view=week&start={{ next_start }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">next week &raquo;</a>
+    </div>
+    <div class="qms-week-grid">
+      {% for d in days %}
+      <div class="qms-week-day {% if d == today %}today{% endif %}">
+        <h4>{{ d|date:"D d M" }}</h4>
+        {% for t in tasks_by_day|get_item:d %}
+          <a class="qms-chip qc-{{ t.status_color }}" href="{% url 'library:qms_task_detail' t.pk %}" title="{{ t.title }}">{{ t.title }}</a>
+        {% empty %}<span class="qms-widget-empty">—</span>{% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="table-scroll">
+    <table class="doc-table">
+      <tr><th class="c-doc">Task</th><th class="c-folder">Category</th><th class="c-issued">Due</th><th class="c-actions">Status</th></tr>
+      {% for t in tasks %}
+      <tr class="doc-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
+        <td class="c-doc">{{ t.title }}</td>
+        <td class="c-folder">{{ t.get_category_display }}</td>
+        <td class="c-issued">{{ t.due_date|date:"d M Y" }}</td>
+        <td class="c-actions"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+      </tr>
+      {% empty %}<tr><td colspan="4">No QMS tasks match these filters.</td></tr>{% endfor %}
+    </table>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -108,3 +108,47 @@ files live in the cloud — nothing depends on your laptop being on.
 ## Costs (approx.)
 Render Starter $7/mo + Postgres Basic ~$6/mo + domain ~$12/yr + storage pennies
 ≈ **$13–15/month**.
+
+---
+
+## 8. QMS Activities Calendar & Reminder System
+
+A company-wide activity calendar sits alongside the document library — board meetings,
+audits, training, reviews, and other recurring QMS activities, with due-date reminders.
+Full design rationale (including the historical evidence behind the default cadences) is
+in `QMS_ACTIVITY_CALENDAR_PLAN.md`.
+
+**Where to find it:**
+- Dashboard → "QMS Activities Calendar" widget (today / upcoming / overdue / this month / next deadline)
+- Top nav → **QMS Calendar** (`/qms-calendar/`) — month, week, and list views, with filters
+  for category, responsible person, status, entity, and ISO clause
+- Top nav → **QMS Tasks** (`/qms-tasks/`) — filterable report list with summary counts
+- Click any task to open its detail page (`/qms-tasks/<id>/`)
+
+**Setting it up the first time:**
+```bash
+python manage.py create_qms_default_tasks
+```
+This is safe to re-run any time — it's idempotent (won't duplicate existing templates)
+and only ever creates **Planned** tasks with forward-looking due dates; it never
+fabricates completed history.
+
+**Managing activities (Admin → QMS Document Library):**
+- **Qms task templates** — the recurring rules (e.g. "Quarterly Board Meeting"). Edit
+  recurrence, reminder days, responsible person, linked procedure, or untick *Is active*
+  to stop generating new occurrences. Action: *Generate next task now*.
+- **Qms tasks** — individual occurrences. Edit status/priority/assignees, link evidence,
+  or bulk-select and *Mark selected as completed* (auto-creates the next occurrence for
+  recurring tasks).
+
+**Permissions:** management sees and edits everything. A task's responsible person or
+assigned users can update their own tasks (status, notes, evidence, mark complete).
+**Auditor accounts are always read-only** on QMS tasks, same as documents.
+
+**Recurrence:** none / daily / weekly / monthly / quarterly / annually, plus a
+"first Monday of the month" rule (used for the monthly branch report). "Due Soon" and
+"Overdue" are computed live from the due date — there's nothing to keep in sync.
+
+**Not yet implemented:** email reminders. The `reminder_days_before` field is in place
+on every task so this is a follow-up, not a redesign, once an email backend is
+configured in `settings.py`.

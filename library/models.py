@@ -1,3 +1,6 @@
+import calendar
+from datetime import date, timedelta
+
 from django.db import models
 from django.db.utils import Error as DBError
 from django.contrib.auth.models import User, Group
@@ -72,3 +75,230 @@ class DownloadLog(models.Model):
 
     class Meta:
         ordering = ["-at"]
+
+
+# ---------------------------------------------------------------------------
+# QMS Activities Calendar & Reminder System
+# See QMS_ACTIVITY_CALENDAR_PLAN.md for the design rationale.
+# ---------------------------------------------------------------------------
+
+QMS_CATEGORY_CHOICES = [
+    ("BOARD_MEETING", "Board Meeting"),
+    ("MANAGEMENT_REVIEW", "Management Review"),
+    ("INTERNAL_AUDIT", "Internal Audit"),
+    ("EXTERNAL_AUDIT", "External Audit"),
+    ("TRAINING", "Training"),
+    ("COMPETENCE_APPRAISAL", "Competence/Appraisal"),
+    ("SUPPLIER_EVALUATION", "Supplier Evaluation"),
+    ("RISK_REVIEW", "Risk Review"),
+    ("KPI_OBJECTIVES", "KPI/Objectives"),
+    ("DOCUMENT_CONTROL", "Document Control"),
+    ("QUALITY_RECORDS", "Quality Records"),
+    ("NCR_CORRECTIVE_ACTION", "NCR/Corrective Action"),
+    ("BRANCH_ENTITY_REPORT", "Branch/Entity Report"),
+    ("CERTIFICATE_LICENSE", "Certificate/License"),
+    ("CLIENT_PROJECT_REVIEW", "Client/Project Review"),
+    ("GENERAL_QMS_TASK", "General QMS Task"),
+]
+
+# Stored statuses only. "Due Soon" and "Overdue" are computed at read time
+# from due_date (see QMSTask.display_status) so they can never go stale —
+# there's no scheduled job in this deployment to keep a stored value fresh.
+QMS_STATUS_CHOICES = [
+    ("planned", "Planned"),
+    ("in_progress", "In Progress"),
+    ("completed", "Completed"),
+    ("cancelled", "Cancelled"),
+    ("needs_review", "Needs Review"),
+]
+QMS_COMPUTED_STATUS_LABELS = {
+    "planned": "Planned", "in_progress": "In Progress", "completed": "Completed",
+    "cancelled": "Cancelled", "needs_review": "Needs Review",
+    "overdue": "Overdue", "due_soon": "Due Soon",
+}
+# Dashboard status color per the requested scheme.
+QMS_STATUS_COLORS = {
+    "completed": "green", "due_soon": "yellow", "overdue": "red",
+    "planned": "grey", "in_progress": "blue", "needs_review": "orange",
+    "cancelled": "grey",
+}
+
+QMS_PRIORITY_CHOICES = [
+    ("low", "Low"), ("medium", "Medium"), ("high", "High"), ("critical", "Critical"),
+]
+
+QMS_RECURRENCE_CHOICES = [
+    ("none", "None"), ("daily", "Daily"), ("weekly", "Weekly"),
+    ("monthly", "Monthly"), ("quarterly", "Quarterly"), ("annually", "Annually"),
+]
+
+QMS_RECURRENCE_RULE_CHOICES = [
+    ("", "— (use recurrence interval as-is)"),
+    ("first_monday", "First Monday of the month"),
+]
+
+
+def _add_months(d, months):
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _first_monday_on_or_after(d):
+    return d + timedelta(days=(0 - d.weekday()) % 7)  # Monday == 0
+
+
+def next_occurrence(base_date, recurrence_type, recurrence_rule=""):
+    """The next due date after base_date for a given recurrence rule, or
+    None for a one-off (non-recurring) task."""
+    if not base_date or recurrence_type == "none":
+        return None
+    if recurrence_rule == "first_monday":
+        year, month = base_date.year, base_date.month + 1
+        if month > 12:
+            month, year = 1, year + 1
+        return _first_monday_on_or_after(date(year, month, 1))
+    if recurrence_type == "daily":
+        return base_date + timedelta(days=1)
+    if recurrence_type == "weekly":
+        return base_date + timedelta(weeks=1)
+    if recurrence_type == "monthly":
+        return _add_months(base_date, 1)
+    if recurrence_type == "quarterly":
+        return _add_months(base_date, 3)
+    if recurrence_type == "annually":
+        return _add_months(base_date, 12)
+    return None
+
+
+class QMSTaskTemplate(models.Model):
+    """A recurring QMS activity rule (e.g. 'Quarterly Board Meeting'). Holds
+    no historical data — it only generates forward-looking QMSTask
+    occurrences, either via the create_qms_default_tasks command or the
+    'Generate next task now' admin action."""
+    name = models.CharField(max_length=200, unique=True)
+    category = models.CharField(max_length=30, choices=QMS_CATEGORY_CHOICES)
+    description = models.TextField(blank=True)
+    process = models.CharField(max_length=200, blank=True,
+        help_text="QMS process this belongs to, e.g. 'Internal Audit Programme'")
+    iso_clause = models.CharField(max_length=40, blank=True, help_text="e.g. 9.2, 9.3, 7.2")
+    related_document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+", help_text="The QMS procedure/form/register this activity follows")
+    default_entity = models.CharField(max_length=100, blank=True,
+        help_text="e.g. VIS-Recruit Cyprus / Ukraine / Asia / Nepal — blank means Group-wide")
+    default_responsible = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    recurrence_type = models.CharField(max_length=12, choices=QMS_RECURRENCE_CHOICES, default="none")
+    recurrence_rule = models.CharField(max_length=20, choices=QMS_RECURRENCE_RULE_CHOICES, blank=True)
+    reminder_days_before = models.PositiveIntegerField(default=7)
+    default_priority = models.CharField(max_length=10, choices=QMS_PRIORITY_CHOICES, default="medium")
+    evidence_required = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True,
+        help_text="Untick to stop generating new occurrences without deleting the template.")
+
+    class Meta:
+        ordering = ["category", "name"]
+
+    def __str__(self):
+        return self.name
+
+    def next_due_date(self, after=None):
+        after = after or date.today()
+        return next_occurrence(after, self.recurrence_type, self.recurrence_rule) or after
+
+    def generate_task(self, due_date=None):
+        """Create the next Planned QMSTask occurrence for this template."""
+        task = QMSTask.objects.create(
+            template=self, title=self.name, description=self.description,
+            category=self.category, process=self.process, iso_clause=self.iso_clause,
+            related_document=self.related_document, entity=self.default_entity,
+            responsible_person=self.default_responsible, due_date=due_date or self.next_due_date(),
+            recurrence_type=self.recurrence_type, reminder_days_before=self.reminder_days_before,
+            priority=self.default_priority, status="planned", evidence_required=self.evidence_required,
+        )
+        return task
+
+
+class QMSTask(models.Model):
+    """A single QMS activity/reminder occurrence — recurring (via `template`)
+    or one-off. 'Due Soon'/'Overdue' are never stored; see display_status."""
+    template = models.ForeignKey(QMSTaskTemplate, null=True, blank=True, on_delete=models.SET_NULL, related_name="tasks")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    category = models.CharField(max_length=30, choices=QMS_CATEGORY_CHOICES)
+    process = models.CharField(max_length=200, blank=True)
+    iso_clause = models.CharField(max_length=40, blank=True)
+    related_document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    entity = models.CharField(max_length=100, blank=True)
+    responsible_person = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="qms_tasks_responsible")
+    assigned_users = models.ManyToManyField(User, blank=True, related_name="qms_tasks_assigned")
+    due_date = models.DateField()
+    start_date = models.DateField(null=True, blank=True)
+    completion_date = models.DateField(null=True, blank=True)
+    recurrence_type = models.CharField(max_length=12, choices=QMS_RECURRENCE_CHOICES, default="none")
+    reminder_days_before = models.PositiveIntegerField(default=7)
+    priority = models.CharField(max_length=10, choices=QMS_PRIORITY_CHOICES, default="medium")
+    status = models.CharField(max_length=15, choices=QMS_STATUS_CHOICES, default="planned")
+    evidence_required = models.BooleanField(default=False)
+    evidence_document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    completion_notes = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["due_date", "title"]
+
+    def __str__(self):
+        return f"{self.title} ({self.due_date})"
+
+    @property
+    def display_status(self):
+        """The status label actually shown in the UI — overrides the stored
+        status with computed 'Overdue'/'Due Soon' when it applies."""
+        if self.status in ("completed", "cancelled", "needs_review"):
+            return self.status
+        if self.due_date < date.today():
+            return "overdue"
+        if self.due_date <= date.today() + timedelta(days=self.reminder_days_before):
+            return "due_soon"
+        return self.status
+
+    @property
+    def display_status_label(self):
+        return QMS_COMPUTED_STATUS_LABELS.get(self.display_status, self.display_status)
+
+    @property
+    def status_color(self):
+        return QMS_STATUS_COLORS.get(self.display_status, "grey")
+
+    def spawn_next(self, due_date):
+        next_task = QMSTask.objects.create(
+            template=self.template, title=self.title, description=self.description,
+            category=self.category, process=self.process, iso_clause=self.iso_clause,
+            related_document=self.related_document, entity=self.entity,
+            responsible_person=self.responsible_person, due_date=due_date,
+            recurrence_type=self.recurrence_type, reminder_days_before=self.reminder_days_before,
+            priority=self.priority, status="planned", evidence_required=self.evidence_required,
+            created_by=self.created_by,
+        )
+        next_task.assigned_users.set(self.assigned_users.all())
+        return next_task
+
+    def mark_completed(self, completion_date=None, notes=""):
+        """Mark completed and, if recurring, create the next Planned
+        occurrence. The new occurrence is always Planned — never Completed."""
+        self.status = "completed"
+        self.completion_date = completion_date or date.today()
+        if notes:
+            self.completion_notes = notes
+        self.save()
+        if self.recurrence_type != "none":
+            rule = self.template.recurrence_rule if self.template else ""
+            next_due = next_occurrence(self.due_date, self.recurrence_type, rule)
+            if next_due:
+                return self.spawn_next(next_due)
+        return None

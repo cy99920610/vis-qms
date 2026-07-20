@@ -27,6 +27,61 @@
 </div>
 
 <div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <div>
+      <h2 style="margin-bottom:2px">QMS Activities Calendar</h2>
+      <p class="hint" style="margin:0">Planned reminders, deadlines, audits, training and reviews.</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <a href="{% url 'library:qms_calendar' %}"><button class="secondary">Open Calendar</button></a>
+      <a href="{% url 'library:qms_tasks' %}"><button class="secondary">All Tasks</button></a>
+    </div>
+  </div>
+
+  <div class="qms-widget-grid">
+    <div class="qms-widget-col">
+      <h3>Today ({{ qms_today|length }})</h3>
+      <ul>
+        {% for t in qms_today %}
+        <li><a class="qtitle" href="{% url 'library:qms_task_detail' t.pk %}">{{ t.title }}</a>
+          <span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></li>
+        {% empty %}<li class="qms-widget-empty">Nothing due today.</li>{% endfor %}
+      </ul>
+    </div>
+    <div class="qms-widget-col">
+      <h3>Upcoming (14 days)</h3>
+      <ul>
+        {% for t in qms_upcoming %}
+        <li><a class="qtitle" href="{% url 'library:qms_task_detail' t.pk %}">{{ t.title }}</a>
+          <span class="qms-badge qms-{{ t.status_color }}">{{ t.due_date|date:"d M" }} &middot; {{ t.display_status_label }}</span></li>
+        {% empty %}<li class="qms-widget-empty">Nothing coming up.</li>{% endfor %}
+      </ul>
+    </div>
+    <div class="qms-widget-col">
+      <h3>Overdue ({{ qms_overdue_count }})</h3>
+      <ul>
+        {% for t in qms_overdue %}
+        <li><a class="qtitle" href="{% url 'library:qms_task_detail' t.pk %}">{{ t.title }}</a>
+          <span class="qms-badge qms-red">Overdue since {{ t.due_date|date:"d M" }}</span></li>
+        {% empty %}<li class="qms-widget-empty">Nothing overdue.</li>{% endfor %}
+      </ul>
+    </div>
+    <div class="qms-widget-col">
+      <h3>This month</h3>
+      <div style="font-size:26px;font-weight:700">{{ qms_this_month_count }}</div>
+      <div class="qms-widget-empty" style="margin-bottom:10px">QMS activities scheduled</div>
+      {% if qms_next_deadline %}
+      <div class="qms-next-deadline">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:3px">Next deadline</div>
+        <a class="qtitle" href="{% url 'library:qms_task_detail' qms_next_deadline.pk %}">{{ qms_next_deadline.title }}</a>
+        <div class="qms-widget-empty">{{ qms_next_deadline.due_date|date:"d M Y" }}</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
   <h2>Recently issued</h2>
   <p class="hint">The latest documents added to the library.</p>
   <ul class="recent-list">

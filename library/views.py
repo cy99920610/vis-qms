@@ -1,18 +1,24 @@
+import calendar as calendar_module
 import json
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, timedelta
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import FileResponse, HttpResponseForbidden, JsonResponse
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
 from .content import extract_document_text
-from .models import Document, DownloadLog, Section
+from .models import (
+    Document, DownloadLog, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask, Section,
+)
 
 CONTENT_SEARCH_SCAN_LIMIT = 60
 
@@ -117,11 +123,26 @@ def dashboard(request):
         for code, label in visible_sections(request.user).values_list("code", "label")
     ]
     recent = qs.order_by("-uploaded_at")[:8]
+
+    today = date.today()
+    open_qms = QMSTask.objects.exclude(status__in=["completed", "cancelled"]).select_related("responsible_person")
+    qms_overdue = [t for t in open_qms if t.due_date < today]
+    qms_today = [t for t in open_qms if t.due_date == today]
+    qms_upcoming = sorted(
+        (t for t in open_qms if today < t.due_date <= today + timedelta(days=14)),
+        key=lambda t: t.due_date,
+    )
+    qms_next_deadline = min((t for t in open_qms if t.due_date >= today), key=lambda t: t.due_date, default=None)
+    qms_this_month_count = QMSTask.objects.filter(due_date__year=today.year, due_date__month=today.month).count()
+
     return render(request, "library/dashboard.html", {
         "role": user_role(request.user),
         "total": qs.count(),
         "section_counts": section_counts,
         "recent": recent,
+        "qms_overdue": qms_overdue[:8], "qms_overdue_count": len(qms_overdue),
+        "qms_today": qms_today, "qms_upcoming": qms_upcoming[:8],
+        "qms_next_deadline": qms_next_deadline, "qms_this_month_count": qms_this_month_count,
     })
 
 
@@ -203,6 +224,145 @@ def download(request, pk):
     DownloadLog.objects.create(document=doc, user=request.user)
     force_download = request.GET.get("dl") == "1"
     return FileResponse(doc.file.open("rb"), as_attachment=force_download, filename=doc.file.name.split("/")[-1])
+
+
+def qms_can_edit(user, task):
+    """Management/superusers can edit any task. Auditors are always
+    read-only (explicit requirement). Everyone else can only update a task
+    they're responsible for or assigned to."""
+    if user.is_superuser or user.groups.filter(name="management").exists():
+        return True
+    if user.groups.filter(name="auditor").exists():
+        return False
+    return task.responsible_person_id == user.id or task.assigned_users.filter(pk=user.id).exists()
+
+
+def _qms_filtered(request):
+    qs = QMSTask.objects.select_related("responsible_person", "related_document")
+    category = request.GET.get("category", "")
+    responsible = request.GET.get("responsible", "")
+    entity = request.GET.get("entity", "")
+    iso_clause = request.GET.get("iso_clause", "").strip()
+    status = request.GET.get("status", "")
+    if category:
+        qs = qs.filter(category=category)
+    if responsible:
+        qs = qs.filter(responsible_person_id=responsible)
+    if entity:
+        qs = qs.filter(entity=entity)
+    if iso_clause:
+        qs = qs.filter(iso_clause__icontains=iso_clause)
+    tasks = list(qs)
+    if status:
+        tasks = [t for t in tasks if t.display_status == status]
+    filters = {"category": category, "responsible": responsible, "entity": entity,
+               "iso_clause": iso_clause, "status": status}
+    return tasks, filters
+
+
+def _qms_filter_choices():
+    return {
+        "category_choices": QMS_CATEGORY_CHOICES,
+        "status_choices": QMS_STATUS_CHOICES,
+        "responsible_choices": User.objects.filter(qms_tasks_responsible__isnull=False)
+            .distinct().order_by("username"),
+        "entity_choices": QMSTask.objects.exclude(entity="").values_list("entity", flat=True).distinct().order_by("entity"),
+    }
+
+
+@login_required
+def qms_calendar(request):
+    view = request.GET.get("view", "month")
+    today = date.today()
+    tasks, filters = _qms_filtered(request)
+
+    context = {"view": view, "today": today, "role": user_role(request.user), **filters, **_qms_filter_choices()}
+
+    if view == "week":
+        start = request.GET.get("start", "")
+        try:
+            week_start = date.fromisoformat(start) if start else today - timedelta(days=today.weekday())
+        except ValueError:
+            week_start = today - timedelta(days=today.weekday())
+        days = [week_start + timedelta(days=i) for i in range(7)]
+        tasks_by_day = {d: [t for t in tasks if t.due_date == d] for d in days}
+        context.update({
+            "days": days, "tasks_by_day": tasks_by_day,
+            "prev_start": (week_start - timedelta(days=7)).isoformat(),
+            "next_start": (week_start + timedelta(days=7)).isoformat(),
+        })
+    elif view == "list":
+        context["tasks"] = sorted(tasks, key=lambda t: t.due_date)
+    else:
+        view = "month"
+        try:
+            year = int(request.GET.get("year", today.year))
+            month = int(request.GET.get("month", today.month))
+        except ValueError:
+            year, month = today.year, today.month
+        weeks = calendar_module.Calendar(firstweekday=0).monthdatescalendar(year, month)
+        tasks_by_day = {}
+        for t in tasks:
+            tasks_by_day.setdefault(t.due_date, []).append(t)
+        prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+        next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+        context.update({
+            "view": "month", "weeks": weeks, "tasks_by_day": tasks_by_day,
+            "year": year, "month": month, "month_name": calendar_module.month_name[month],
+            "prev_year": prev_year, "prev_month": prev_month,
+            "next_year": next_year, "next_month": next_month,
+        })
+
+    return render(request, "library/qms_calendar.html", context)
+
+
+@login_required
+def qms_tasks(request):
+    tasks, filters = _qms_filtered(request)
+    open_count = sum(1 for t in tasks if t.status not in ("completed", "cancelled"))
+    overdue_count = sum(1 for t in tasks if t.display_status == "overdue")
+    completed_count = sum(1 for t in tasks if t.status == "completed")
+    by_category = Counter(t.get_category_display() for t in tasks)
+
+    page = Paginator(sorted(tasks, key=lambda t: t.due_date), 50).get_page(request.GET.get("page"))
+    return render(request, "library/qms_tasks.html", {
+        "page": page, "role": user_role(request.user), **filters, **_qms_filter_choices(),
+        "open_count": open_count, "overdue_count": overdue_count, "completed_count": completed_count,
+        "total_count": len(tasks), "by_category": by_category.most_common(),
+    })
+
+
+@login_required
+def qms_task_detail(request, pk):
+    task = get_object_or_404(QMSTask, pk=pk)
+    can_edit = qms_can_edit(request.user, task)
+
+    if request.method == "POST":
+        if not can_edit:
+            return HttpResponseForbidden("You don't have permission to update this task.")
+        if request.POST.get("action") == "mark_completed":
+            next_task = task.mark_completed(notes=request.POST.get("completion_notes", "").strip())
+            msg = "Task marked completed."
+            if next_task:
+                msg += f" Next occurrence created for {next_task.due_date:%d %b %Y}."
+            messages.success(request, msg)
+        else:
+            new_status = request.POST.get("status")
+            if new_status in dict(QMS_STATUS_CHOICES):
+                task.status = new_status
+            task.notes = request.POST.get("notes", task.notes)
+            evidence_id = request.POST.get("evidence_document")
+            if evidence_id:
+                task.evidence_document_id = evidence_id
+            task.save()
+            messages.success(request, "Task updated.")
+        return redirect("library:qms_task_detail", pk=pk)
+
+    evidence_options = visible_documents(request.user).order_by("-issue_date")[:300] if can_edit else []
+    return render(request, "library/qms_task_detail.html", {
+        "task": task, "can_edit": can_edit, "role": user_role(request.user),
+        "status_choices": QMS_STATUS_CHOICES, "evidence_options": evidence_options,
+    })
 
 
 @login_required

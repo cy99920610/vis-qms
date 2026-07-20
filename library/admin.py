@@ -7,7 +7,7 @@ from django.shortcuts import render
 from django.urls import path
 from django.utils.safestring import mark_safe
 
-from .models import Document, DownloadLog, Section, section_choices
+from .models import Document, DownloadLog, QMSTask, QMSTaskTemplate, Section, section_choices
 from .views import build_folder_tree
 
 
@@ -297,6 +297,62 @@ class DocumentAdmin(admin.ModelAdmin):
             "opts": self.model._meta,
         }
         return render(request, "admin/library/document/move_to_folder.html", context)
+
+@admin.register(QMSTaskTemplate)
+class QMSTaskTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "recurrence_type", "recurrence_rule", "default_responsible", "is_active")
+    list_filter = ("category", "recurrence_type", "is_active")
+    search_fields = ("name", "description", "process", "iso_clause")
+    autocomplete_fields = ["related_document"]
+    actions = ["generate_task_now"]
+    fieldsets = (
+        (None, {"fields": ("name", "category", "description", "is_active")}),
+        ("QMS context", {"fields": ("process", "iso_clause", "related_document", "default_entity")}),
+        ("Recurrence", {"fields": ("recurrence_type", "recurrence_rule", "reminder_days_before")}),
+        ("Defaults for generated tasks", {"fields": ("default_responsible", "default_priority", "evidence_required")}),
+    )
+
+    @admin.action(description="Generate next task now")
+    def generate_task_now(self, request, queryset):
+        for template in queryset:
+            template.generate_task()
+        self.message_user(request, f"Generated a task for {queryset.count()} template(s).")
+
+
+@admin.register(QMSTask)
+class QMSTaskAdmin(admin.ModelAdmin):
+    list_display = ("title", "category", "due_date", "priority", "status_badge", "responsible_person", "entity")
+    list_filter = ("category", "status", "priority", "entity", "recurrence_type")
+    search_fields = ("title", "description", "process", "iso_clause", "notes")
+    date_hierarchy = "due_date"
+    filter_horizontal = ("assigned_users",)
+    autocomplete_fields = ["related_document", "evidence_document"]
+    actions = ["mark_completed_action"]
+    fieldsets = (
+        (None, {"fields": ("title", "description", "category", "template")}),
+        ("QMS context", {"fields": ("process", "iso_clause", "related_document", "entity")}),
+        ("People", {"fields": ("responsible_person", "assigned_users", "created_by")}),
+        ("Schedule", {"fields": ("start_date", "due_date", "completion_date", "recurrence_type", "reminder_days_before")}),
+        ("Status", {"fields": ("priority", "status", "evidence_required", "evidence_document", "completion_notes", "notes")}),
+    )
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        return obj.display_status_label
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    @admin.action(description="Mark selected as completed (generates next occurrence if recurring)")
+    def mark_completed_action(self, request, queryset):
+        created = 0
+        for task in queryset.exclude(status="completed"):
+            if task.mark_completed():
+                created += 1
+        self.message_user(request, f"Marked {queryset.count()} task(s) completed; {created} recurring follow-up task(s) generated.")
+
 
 @admin.register(DownloadLog)
 class DownloadLogAdmin(admin.ModelAdmin):
