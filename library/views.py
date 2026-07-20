@@ -12,6 +12,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import FileResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
+from django.urls import reverse
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
@@ -270,6 +271,32 @@ def _qms_filter_choices():
     }
 
 
+# Most-attention-worthy first — used to pick a single highlight color for a
+# calendar day that has more than one task on it (year view).
+_QMS_DAY_COLOR_PRIORITY = ["overdue", "due_soon", "needs_review", "in_progress", "planned", "completed", "cancelled"]
+
+
+def _day_color(day_tasks):
+    statuses = {t.display_status: t.status_color for t in day_tasks}
+    for s in _QMS_DAY_COLOR_PRIORITY:
+        if s in statuses:
+            return statuses[s]
+    return "grey"
+
+
+def _task_popup_dict(t):
+    if t.responsible_person:
+        responsible = t.responsible_person.get_full_name() or t.responsible_person.username
+    else:
+        responsible = "—"
+    return {
+        "title": t.title, "category": t.get_category_display(),
+        "due_date": t.due_date.strftime("%d %b %Y"), "responsible": responsible,
+        "status": t.display_status_label, "status_color": t.status_color,
+        "url": reverse("library:qms_task_detail", args=[t.pk]),
+    }
+
+
 @login_required
 def qms_calendar(request):
     view = request.GET.get("view", "month")
@@ -293,6 +320,27 @@ def qms_calendar(request):
         })
     elif view == "list":
         context["tasks"] = sorted(tasks, key=lambda t: t.due_date)
+    elif view == "year":
+        try:
+            year = int(request.GET.get("year", today.year))
+        except ValueError:
+            year = today.year
+        tasks_by_day = {}
+        for t in tasks:
+            tasks_by_day.setdefault(t.due_date, []).append(t)
+        day_colors = {d: _day_color(ts) for d, ts in tasks_by_day.items()}
+        day_popup = {d.isoformat(): [_task_popup_dict(t) for t in ts] for d, ts in tasks_by_day.items()}
+        cal = calendar_module.Calendar(firstweekday=0)
+        months = [
+            {"num": m, "name": calendar_module.month_abbr[m], "weeks": cal.monthdatescalendar(year, m)}
+            for m in range(1, 13)
+        ]
+        context.update({
+            "view": "year", "year": year, "months": months,
+            "tasks_by_day": tasks_by_day, "day_colors": day_colors,
+            "day_popup_json": json.dumps(day_popup).replace("</", "<\\/"),
+            "prev_year": year - 1, "next_year": year + 1,
+        })
     else:
         view = "month"
         try:

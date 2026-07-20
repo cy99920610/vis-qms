@@ -195,6 +195,48 @@ footer{text-align:center;color:var(--faint);font-size:11px;padding:26px 20px}
 .qms-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px 24px;margin:14px 0}
 .qms-detail-grid dt{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
 .qms-detail-grid dd{margin:0;font-size:14px;color:var(--ink)}
+
+/* QMS tasks table — dedicated widths so status badges never wrap vertically */
+.qms-table{width:100%;min-width:900px;border-collapse:collapse;font-size:13px;table-layout:fixed}
+.qms-table th{background:var(--navy-2);color:#fff;text-align:left;padding:8px 10px;font-weight:600;font-size:11.5px;letter-spacing:.2px;white-space:nowrap}
+.qms-table td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qms-table tr.qms-row{cursor:pointer}
+.qms-table tr.qms-row:hover td{background:var(--panel-2)}
+.qms-table .qt-task{width:25%;font-weight:600;color:var(--ink)}
+.qms-table .qt-category{width:15%;color:var(--muted)}
+.qms-table .qt-entity{width:11%;color:var(--muted)}
+.qms-table .qt-responsible{width:13%;color:var(--muted)}
+.qms-table .qt-due{width:11%}
+.qms-table .qt-priority{width:8%;color:var(--muted)}
+.qms-table .qt-status{width:13%}
+.qms-table .qt-actions{width:70px;text-align:right}
+.qms-table .qt-actions a{font-size:12px;font-weight:600;text-decoration:none}
+
+/* Year view */
+.qms-year-toolbar{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.qms-year-toolbar h2{margin:0;font-size:18px}
+.qms-year-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.qms-year-month{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:10px 10px 6px}
+.qms-year-month h4{margin:0 0 6px;font-size:12.5px;color:var(--ink);text-align:center;font-weight:700}
+.qms-year-table{width:100%;border-collapse:collapse;font-size:10.5px;table-layout:fixed}
+.qms-year-table th{color:var(--faint);font-weight:600;padding:1px 0;text-align:center}
+.qms-year-table td{text-align:center;padding:1.5px 0;color:var(--muted)}
+.qms-year-table td.other-month{opacity:.3}
+.qms-year-day{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;line-height:1}
+.qms-year-day.has-tasks{cursor:pointer;font-weight:700;color:#0A1330}
+.qms-year-day.today-marker{box-shadow:0 0 0 2px var(--navy-3)}
+.qc-green.has-tasks{background:#5FD897}
+.qc-yellow.has-tasks{background:#F0C94A}
+.qc-red.has-tasks{background:var(--danger);color:#fff}
+.qc-grey.has-tasks{background:var(--faint);color:#fff}
+.qc-blue.has-tasks{background:#7FA6FF}
+.qc-orange.has-tasks{background:#F0954A}
+.qms-day-popup-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.qms-day-popup-list li{border-bottom:1px solid var(--line);padding-bottom:8px}
+.qms-day-popup-list li:last-child{border-bottom:none;padding-bottom:0}
+.qms-day-popup-list .qdp-title{font-weight:700;color:var(--ink);font-size:14px}
+.qms-day-popup-list .qdp-meta{font-size:12px;color:var(--muted);margin-top:2px}
+.qms-day-popup-list a.qdp-link{font-size:12px;font-weight:600;display:inline-block;margin-top:4px}
 </style></head>
 <body>
 <header>

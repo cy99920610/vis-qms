@@ -45,17 +45,24 @@
 
 <div class="card">
   <div class="table-scroll">
-  <table class="doc-table">
-    <tr><th class="c-doc">Task</th><th class="c-folder">Category / Entity</th><th class="c-issued">Due</th><th class="c-rev">Priority</th><th class="c-actions">Status</th></tr>
-    {% for t in page %}
-    <tr class="doc-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
-      <td class="c-doc">{{ t.title }}{% if t.responsible_person %} <span style="color:var(--faint);font-size:12px">— {{ t.responsible_person.get_full_name|default:t.responsible_person.username }}</span>{% endif %}</td>
-      <td class="c-folder">{{ t.get_category_display }}{% if t.entity %} · {{ t.entity }}{% endif %}</td>
-      <td class="c-issued">{{ t.due_date|date:"d M Y" }}</td>
-      <td class="c-rev">{{ t.get_priority_display }}</td>
-      <td class="c-actions"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+  <table class="qms-table">
+    <tr>
+      <th class="qt-task">Task</th><th class="qt-category">Category</th><th class="qt-entity">Entity</th>
+      <th class="qt-responsible">Responsible</th><th class="qt-due">Due Date</th><th class="qt-priority">Priority</th>
+      <th class="qt-status">Status</th><th class="qt-actions">&nbsp;</th>
     </tr>
-    {% empty %}<tr><td colspan="5">No QMS tasks match these filters.</td></tr>{% endfor %}
+    {% for t in page %}
+    <tr class="qms-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
+      <td class="qt-task" title="{{ t.title }}">{{ t.title }}</td>
+      <td class="qt-category" title="{{ t.get_category_display }}">{{ t.get_category_display }}</td>
+      <td class="qt-entity" title="{{ t.entity }}">{{ t.entity|default:"—" }}</td>
+      <td class="qt-responsible" title="{% if t.responsible_person %}{{ t.responsible_person.get_full_name|default:t.responsible_person.username }}{% endif %}">{% if t.responsible_person %}{{ t.responsible_person.get_full_name|default:t.responsible_person.username }}{% else %}—{% endif %}</td>
+      <td class="qt-due">{{ t.due_date|date:"d M Y" }}</td>
+      <td class="qt-priority">{{ t.get_priority_display }}</td>
+      <td class="qt-status"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+      <td class="qt-actions" onclick="event.stopPropagation()"><a href="{% url 'library:qms_task_detail' t.pk %}">Open</a></td>
+    </tr>
+    {% empty %}<tr><td colspan="8">No QMS tasks match these filters.</td></tr>{% endfor %}
   </table>
   </div>
   <p class="pag">

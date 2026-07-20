@@ -8,6 +8,7 @@
   <div class="qms-toolbar">
     <div class="qms-view-tabs">
       <a href="{% querystring view="month" %}" class="{% if view == 'month' %}active{% endif %}">Month</a>
+      <a href="{% querystring view="year" %}" class="{% if view == 'year' %}active{% endif %}">Year</a>
       <a href="{% querystring view="week" %}" class="{% if view == 'week' %}active{% endif %}">Week</a>
       <a href="{% querystring view="list" %}" class="{% if view == 'list' %}active{% endif %}">List</a>
     </div>
@@ -60,6 +61,41 @@
       {% endfor %}
     </table>
     </div>
+
+  {% elif view == "year" %}
+    <div class="qms-year-toolbar">
+      <a href="?view=year&year={{ prev_year }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">&laquo; prev</a>
+      <h2>{{ year }}</h2>
+      <a href="?view=year&year={{ next_year }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">next &raquo;</a>
+    </div>
+    <div class="qms-year-grid">
+      {% for m in months %}
+      <div class="qms-year-month">
+        <h4>{{ m.name }}</h4>
+        <table class="qms-year-table">
+          <tr><th>M</th><th>T</th><th>W</th><th>T</th><th>F</th><th>S</th><th>S</th></tr>
+          {% for week in m.weeks %}
+          <tr>
+            {% for day in week %}
+            <td class="{% if day.month != m.num %}other-month{% endif %}">
+              {% with day_tasks=tasks_by_day|get_item:day color=day_colors|get_item:day %}
+              {% if day_tasks %}
+                <span class="qms-year-day has-tasks qc-{{ color }} {% if day == today %}today-marker{% endif %}"
+                      onclick="openQmsDayModal('{{ day|date:'Y-m-d' }}')"
+                      title="{{ day_tasks|join_titles }}">{{ day.day }}</span>
+              {% else %}
+                <span class="qms-year-day {% if day == today %}today-marker{% endif %}">{{ day.day }}</span>
+              {% endif %}
+              {% endwith %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% endfor %}
+    </div>
+
   {% elif view == "week" %}
     <div class="qms-cal-nav">
       <a href="?view=week&start={{ prev_start }}&category={{ category }}&status={{ status }}&responsible={{ responsible }}&entity={{ entity }}&iso_clause={{ iso_clause }}">&laquo; prev week</a>
@@ -76,20 +112,65 @@
       </div>
       {% endfor %}
     </div>
+
   {% else %}
     <div class="table-scroll">
-    <table class="doc-table">
-      <tr><th class="c-doc">Task</th><th class="c-folder">Category</th><th class="c-issued">Due</th><th class="c-actions">Status</th></tr>
-      {% for t in tasks %}
-      <tr class="doc-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
-        <td class="c-doc">{{ t.title }}</td>
-        <td class="c-folder">{{ t.get_category_display }}</td>
-        <td class="c-issued">{{ t.due_date|date:"d M Y" }}</td>
-        <td class="c-actions"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+    <table class="qms-table">
+      <tr>
+        <th class="qt-task">Task</th><th class="qt-category">Category</th><th class="qt-entity">Entity</th>
+        <th class="qt-responsible">Responsible</th><th class="qt-due">Due</th><th class="qt-priority">Priority</th>
+        <th class="qt-status">Status</th><th class="qt-actions">&nbsp;</th>
       </tr>
-      {% empty %}<tr><td colspan="4">No QMS tasks match these filters.</td></tr>{% endfor %}
+      {% for t in tasks %}
+      <tr class="qms-row" onclick="window.location='{% url 'library:qms_task_detail' t.pk %}'">
+        <td class="qt-task" title="{{ t.title }}">{{ t.title }}</td>
+        <td class="qt-category" title="{{ t.get_category_display }}">{{ t.get_category_display }}</td>
+        <td class="qt-entity" title="{{ t.entity }}">{{ t.entity|default:"—" }}</td>
+        <td class="qt-responsible" title="{% if t.responsible_person %}{{ t.responsible_person.get_full_name|default:t.responsible_person.username }}{% endif %}">{% if t.responsible_person %}{{ t.responsible_person.get_full_name|default:t.responsible_person.username }}{% else %}—{% endif %}</td>
+        <td class="qt-due">{{ t.due_date|date:"d M Y" }}</td>
+        <td class="qt-priority">{{ t.get_priority_display }}</td>
+        <td class="qt-status"><span class="qms-badge qms-{{ t.status_color }}">{{ t.display_status_label }}</span></td>
+        <td class="qt-actions" onclick="event.stopPropagation()"><a href="{% url 'library:qms_task_detail' t.pk %}">Open</a></td>
+      </tr>
+      {% empty %}<tr><td colspan="8">No QMS tasks match these filters.</td></tr>{% endfor %}
     </table>
     </div>
   {% endif %}
 </div>
+
+<div id="qms-day-modal" class="modal" onclick="if(event.target===this) closeQmsDayModal()">
+  <div class="modal-box" style="width:min(480px,94vw)">
+    <div class="modal-bar"><span id="qms-day-modal-title">Tasks</span><button type="button" class="modal-close" onclick="closeQmsDayModal()">Close ✕</button></div>
+    <div style="padding:16px 18px;max-height:70vh;overflow:auto">
+      <ul id="qms-day-modal-list" class="qms-day-popup-list"></ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if view == "year" %}
+<script>
+var QMS_DAY_TASKS = {{ day_popup_json|safe }};
+function openQmsDayModal(dateStr) {
+  var tasks = QMS_DAY_TASKS[dateStr] || [];
+  document.getElementById('qms-day-modal-title').textContent = dateStr + ' — ' + tasks.length + ' task' + (tasks.length === 1 ? '' : 's');
+  var list = document.getElementById('qms-day-modal-list');
+  list.innerHTML = '';
+  tasks.forEach(function (t) {
+    var li = document.createElement('li');
+    li.innerHTML =
+      '<div class="qdp-title">' + t.title + '</div>' +
+      '<div class="qdp-meta">' + t.category + ' &middot; Due ' + t.due_date + ' &middot; ' + t.responsible + '</div>' +
+      '<span class="qms-badge qms-' + t.status_color + '">' + t.status + '</span><br>' +
+      '<a class="qdp-link" href="' + t.url + '">Open task details &rarr;</a>';
+    list.appendChild(li);
+  });
+  document.getElementById('qms-day-modal').style.display = 'flex';
+}
+function closeQmsDayModal() {
+  document.getElementById('qms-day-modal').style.display = 'none';
+}
+</script>
+{% endif %}
 {% endblock %}
