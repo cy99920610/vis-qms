@@ -72,7 +72,6 @@
               {% if d.is_pdf and can_prev %}<button type="button" class="link-btn" onclick="openPdfPreview('{% url 'library:download' d.pk %}')">👁</button>{% endif %}
               {% if can_prev %}<a href="{% url 'library:download' d.pk %}" target="_blank" rel="noopener" title="Open">↗</a>{% endif %}
               {% if can_dl %}<a href="{% url 'library:download' d.pk %}?dl=1" title="Download">⬇</a>{% endif %}
-              {% if not can_prev and not can_dl %}<span class="qms-badge qms-grey" title="You do not have permission to access this document format.">Restricted format</span>{% endif %}
             </span>
           </td>
         </tr>

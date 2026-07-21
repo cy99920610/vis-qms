@@ -37,11 +37,17 @@ def visible_sections(user):
 
 
 def visible_documents(user):
-    """Role-based visibility:
+    """Role-based visibility — the single central query filter. Every listing
+    (browse, search, folder counts, AI assistant, QMS task/calendar linked
+    documents) is built from this queryset, so a document the role can't see
+    never appears anywhere, not just in the main table:
     - superuser / 'management' group: everything incl. drafts
-    - everyone else: gated by their RoleAccessProfile (draft / source-editable /
-      obsolete / external-auditor-package-only), never anything filed under a
-      section hidden from one of their groups, and never an individual
+    - everyone else: gated by their RoleAccessProfile — draft / source-editable /
+      obsolete / external-auditor-package-only visibility, AND file format
+      (a document whose extension isn't in the role's allowed preview or
+      download formats is excluded from the queryset entirely, at the DB
+      level, not just hidden behind a UI badge) — never anything filed under
+      a section hidden from one of their groups, and never an individual
       document hidden from one of their groups
     """
     qs = Document.objects.all()
@@ -62,7 +68,24 @@ def visible_documents(user):
     hidden_codes = Section.objects.filter(hidden_from_groups__in=user.groups.all()).values_list("code", flat=True)
     if hidden_codes:
         qs = qs.exclude(section__in=list(hidden_codes))
-    return qs.exclude(hidden_from_groups__in=user.groups.all())
+    qs = qs.exclude(hidden_from_groups__in=user.groups.all())
+
+    allowed_formats = profile.preview_formats_set() | profile.download_formats_set()
+    if not allowed_formats:
+        return qs.none()
+    format_q = Q()
+    for ext in allowed_formats:
+        format_q |= Q(file__iendswith="." + ext)
+    return qs.filter(format_q)
+
+
+def can_user_view_document(user, document):
+    """Single-document visibility check — same rule as visible_documents(),
+    for call sites that already have a Document instance in hand (QMS task
+    related/evidence links) rather than a queryset to filter."""
+    if document is None:
+        return False
+    return visible_documents(user).filter(pk=document.pk).exists()
 
 
 def get_role_profile(user):
@@ -106,9 +129,7 @@ def doc_is_openable(user, doc):
     reference shown outside the main browse listing (e.g. a QMSTask's
     related/evidence document), which isn't already pre-filtered through
     visible_documents()."""
-    if doc is None:
-        return False
-    if not visible_documents(user).filter(pk=doc.pk).exists():
+    if not can_user_view_document(user, doc):
         return False
     return can_preview_format(user, file_ext(doc))
 
@@ -268,11 +289,10 @@ def browse(request):
         qs = qs.filter(Q(title__icontains=q) | Q(code__icontains=q) | Q(folder__icontains=q) | Q(notes__icontains=q))
 
     tree = build_folder_tree(base_qs, user_sections, current_folder=folder)
+    # base_qs is already format-filtered by visible_documents(), so this
+    # naturally only lists formats the role can actually see.
     formats = distinct_formats(base_qs)
     preview_formats, download_formats, access_profile = get_access_context(request.user)
-    if preview_formats is not None:
-        allowed_formats = preview_formats | download_formats
-        formats = [f for f in formats if f in allowed_formats]
 
     page = Paginator(qs, 50).get_page(request.GET.get("page"))
     return render(request, "library/browse.html", {

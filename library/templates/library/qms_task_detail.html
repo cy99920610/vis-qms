@@ -22,7 +22,6 @@
     <div><dt>Entity/Branch</dt><dd>{{ task.entity|default:"—" }}</dd></div>
     <div><dt>Related document</dt>
       <dd>{% if task.related_document and related_doc_openable %}<a href="{% url 'library:download' task.related_document.pk %}" target="_blank" rel="noopener">{{ task.related_document.code }}{% if task.related_document.code %} — {% endif %}{{ task.related_document.title }}</a>
-      {% elif task.related_document %}<span class="qms-badge qms-grey" title="You do not have permission to access this document format.">Restricted</span>
       {% else %}—{% endif %}</dd></div>
     <div><dt>Responsible person</dt><dd>{% if task.responsible_person %}{{ task.responsible_person.get_full_name|default:task.responsible_person.username }}{% else %}—{% endif %}</dd></div>
     <div><dt>Assigned to</dt><dd>{% for u in task.assigned_users.all %}{{ u.get_full_name|default:u.username }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</dd></div>
@@ -34,7 +33,6 @@
     <div><dt>Evidence required</dt><dd>{{ task.evidence_required|yesno:"Yes,No" }}</dd></div>
     <div><dt>Evidence</dt>
       <dd>{% if task.evidence_document and evidence_doc_openable %}<a href="{% url 'library:download' task.evidence_document.pk %}" target="_blank" rel="noopener">{{ task.evidence_document.code }}{% if task.evidence_document.code %} — {% endif %}{{ task.evidence_document.title }}</a>
-      {% elif task.evidence_document %}<span class="qms-badge qms-grey" title="You do not have permission to access this document format.">Restricted</span>
       {% else %}—{% endif %}</dd></div>
   </dl>
 
