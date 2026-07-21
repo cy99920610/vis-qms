@@ -1,10 +1,13 @@
 import json
+from datetime import date
 
 from django import forms
 from django.contrib import admin
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseRedirect
-from django.shortcuts import render
-from django.urls import path
+from django.shortcuts import get_object_or_404, render
+from django.urls import path, reverse
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from .models import (
@@ -304,7 +307,7 @@ class DocumentAdmin(admin.ModelAdmin):
     list_editable = ("is_final",)
     date_hierarchy = "issue_date"
     filter_horizontal = ("hidden_from_groups",)
-    actions = ["move_to_folder"]
+    actions = ["move_to_folder", "clone_as_template"]
 
     @admin.display(description="Hidden from")
     def hidden_from(self, obj):
@@ -325,8 +328,63 @@ class DocumentAdmin(admin.ModelAdmin):
         custom = [
             path("move-to-folder/", self.admin_site.admin_view(self.move_to_folder_view),
                  name="library_document_move_to_folder"),
+            path("<int:pk>/clone-as-template/", self.admin_site.admin_view(self.clone_as_template_view),
+                 name="library_document_clone"),
         ]
         return custom + super().get_urls()
+
+    @staticmethod
+    def _can_clone(user):
+        # Only QMS Manager/Admin accounts may clone — matches who already has
+        # add/change permission on Document in practice, checked explicitly
+        # here so this stays true even if that permission setup ever drifts.
+        return user.is_superuser or user.groups.filter(name="management").exists()
+
+    def _clone_document(self, original, request):
+        """Create a new draft Document copied from `original`. File is left
+        empty (safest option — never reuses the original's stored file) so
+        the admin uploads a new one; is_final is forced off so the copy is
+        never mistaken for an approved document; the source document is
+        never modified."""
+        clone = Document(
+            title=f"COPY - {original.title}",
+            code=original.code,
+            revision=original.revision,
+            section=original.section,
+            folder=original.folder,
+            issue_date=date.today(),
+            file="",
+            is_final=False,
+            notes=original.notes,
+            uploaded_by=request.user,
+        )
+        clone.save()
+        clone.hidden_from_groups.set(original.hidden_from_groups.all())
+        return clone
+
+    def clone_as_template_view(self, request, pk):
+        if not self._can_clone(request.user):
+            raise PermissionDenied("Only QMS Manager/Admin accounts can clone documents.")
+        original = get_object_or_404(Document, pk=pk)
+        clone = self._clone_document(original, request)
+
+        change_url = reverse("admin:library_document_change", args=[clone.pk])
+        self.message_user(request, format_html(
+            'Cloned "{}" as a new draft — upload the new file and edit details, then save. '
+            '<a href="{}">Original document</a> was not changed.',
+            original.title, reverse("admin:library_document_change", args=[original.pk]),
+        ))
+        return HttpResponseRedirect(change_url)
+
+    @admin.action(description="Clone as Template (creates a draft copy)")
+    def clone_as_template(self, request, queryset):
+        if not self._can_clone(request.user):
+            self.message_user(request, "Only QMS Manager/Admin accounts can clone documents.", level="error")
+            return None
+        if queryset.count() != 1:
+            self.message_user(request, "Select exactly one document to clone.", level="warning")
+            return None
+        return self.clone_as_template_view(request, queryset.first().pk)
 
     def move_to_folder_view(self, request):
         ids = request.POST.get("ids") if request.method == "POST" else request.GET.get("ids", "")

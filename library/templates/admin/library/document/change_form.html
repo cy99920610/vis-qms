@@ -1,0 +1,13 @@
+{% extends "admin/change_form.html" %}
+
+{% block object-tools-items %}
+  {% if original %}
+    <li>
+      <a href="{% url 'admin:library_document_clone' original.pk %}" class="button"
+         onclick="return confirm('Create a new draft document copied from &quot;{{ original.title|escapejs }}&quot;? The original will not be changed.');">
+        Clone as Template
+      </a>
+    </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
