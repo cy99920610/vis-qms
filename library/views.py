@@ -328,6 +328,30 @@ def browse(request):
 
 
 @login_required
+def document_search_api(request):
+    """Metadata search behind the 'Link evidence document' autocomplete
+    widget — same permission gate as Browse Documents (visible_documents),
+    so a role never sees a document here it couldn't already see/open in
+    the library. Not a general-purpose API; used only by that widget."""
+    q = request.GET.get("q", "").strip()
+    qs = visible_documents(request.user)
+    if q:
+        qs = qs.filter(_keyword_query(["title", "code", "folder"], q))
+    qs = qs.order_by("-issue_date")[:30]
+    results = [
+        {
+            "id": d.pk,
+            "text": f"{d.code + ' — ' if d.code else ''}{d.title}",
+            "format": file_ext(d).upper(),
+            "folder": d.folder,
+            "status": "Final" if d.is_final else "Draft",
+        }
+        for d in qs
+    ]
+    return JsonResponse({"results": results})
+
+
+@login_required
 @xframe_options_sameorigin
 def download(request, pk):
     doc = get_object_or_404(Document, pk=pk)
@@ -516,17 +540,21 @@ def qms_task_detail(request, pk):
             if new_status in dict(QMS_STATUS_CHOICES):
                 task.status = new_status
             task.notes = request.POST.get("notes", task.notes)
-            evidence_id = request.POST.get("evidence_document")
-            if evidence_id:
-                task.evidence_document_id = evidence_id
+            if "evidence_document" in request.POST:
+                evidence_id = request.POST.get("evidence_document")
+                if not evidence_id:
+                    task.evidence_document_id = None
+                elif visible_documents(request.user).filter(pk=evidence_id).exists():
+                    task.evidence_document_id = evidence_id
+                else:
+                    messages.error(request, "Selected evidence document is not available for your role.")
             task.save()
             messages.success(request, "Task updated.")
         return redirect("library:qms_task_detail", pk=pk)
 
-    evidence_options = visible_documents(request.user).order_by("-issue_date")[:300] if can_edit else []
     return render(request, "library/qms_task_detail.html", {
         "task": task, "can_edit": can_edit, "role": user_role(request.user),
-        "status_choices": QMS_STATUS_CHOICES, "evidence_options": evidence_options,
+        "status_choices": QMS_STATUS_CHOICES,
         "related_doc_openable": doc_is_openable(request.user, task.related_document),
         "evidence_doc_openable": doc_is_openable(request.user, task.evidence_document),
     })

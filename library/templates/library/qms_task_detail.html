@@ -57,16 +57,20 @@
         <textarea name="notes" rows="3" style="width:100%;max-width:520px">{{ task.notes }}</textarea>
       </label>
     </p>
-    {% if evidence_options %}
     <p>
-      <label>Link evidence document<br>
-        <select name="evidence_document" style="max-width:520px">
-          <option value="">— none —</option>
-          {% for d in evidence_options %}<option value="{{ d.pk }}" {% if task.evidence_document_id == d.pk %}selected{% endif %}>{{ d.code }}{% if d.code %} — {% endif %}{{ d.title }}</option>{% endfor %}
-        </select>
-      </label>
+      <label>Link evidence document</label><br>
+      <div class="doc-picker" id="evidence-picker"
+           data-search-url="{% url 'library:document_search_api' %}"
+           data-current-id="{{ task.evidence_document_id|default:'' }}"
+           data-current-text="{% if task.evidence_document %}{{ task.evidence_document.code }}{% if task.evidence_document.code %} — {% endif %}{{ task.evidence_document.title }}{% endif %}">
+        <input type="hidden" name="evidence_document" class="doc-picker-value">
+        <div class="doc-picker-box">
+          <input type="text" class="doc-picker-input" placeholder="Search document by title, code, filename, folder…" autocomplete="off">
+          <button type="button" class="doc-picker-clear" title="Clear selection">✕</button>
+        </div>
+        <div class="doc-picker-results"></div>
+      </div>
     </p>
-    {% endif %}
     <button type="submit">Save changes</button>
   </form>
 
@@ -84,4 +88,76 @@
   {% endif %}
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var picker = document.getElementById('evidence-picker');
+  if (!picker) return;
+
+  var input = picker.querySelector('.doc-picker-input');
+  var hidden = picker.querySelector('.doc-picker-value');
+  var results = picker.querySelector('.doc-picker-results');
+  var clearBtn = picker.querySelector('.doc-picker-clear');
+  var searchUrl = picker.dataset.searchUrl;
+  var debounceTimer = null;
+
+  if (picker.dataset.currentId) {
+    hidden.value = picker.dataset.currentId;
+    input.value = picker.dataset.currentText;
+  }
+
+  function renderResults(docs) {
+    results.innerHTML = '';
+    if (!docs.length) {
+      var empty = document.createElement('div');
+      empty.className = 'doc-picker-empty';
+      empty.textContent = 'No matching documents found.';
+      results.appendChild(empty);
+    } else {
+      docs.forEach(function (d) {
+        var item = document.createElement('div');
+        item.className = 'doc-picker-item';
+        item.innerHTML =
+          '<span class="qms-badge qms-grey">' + d.format + '</span>' +
+          '<span class="doc-picker-item-text">' + d.text + '</span>' +
+          '<span class="doc-picker-item-folder">' + d.folder + '</span>';
+        item.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          hidden.value = d.id;
+          input.value = d.text;
+          results.style.display = 'none';
+        });
+        results.appendChild(item);
+      });
+    }
+    results.style.display = 'block';
+  }
+
+  function search(q) {
+    fetch(searchUrl + '?q=' + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (data) { renderResults(data.results || []); })
+      .catch(function () { renderResults([]); });
+  }
+
+  input.addEventListener('input', function () {
+    hidden.value = '';
+    clearTimeout(debounceTimer);
+    var q = input.value;
+    debounceTimer = setTimeout(function () { search(q); }, 250);
+  });
+  input.addEventListener('focus', function () { search(input.value); });
+  document.addEventListener('click', function (e) {
+    if (!picker.contains(e.target)) results.style.display = 'none';
+  });
+  clearBtn.addEventListener('click', function () {
+    hidden.value = '';
+    input.value = '';
+    results.style.display = 'none';
+    input.focus();
+  });
+})();
+</script>
 {% endblock %}
