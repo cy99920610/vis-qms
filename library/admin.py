@@ -301,13 +301,16 @@ class SectionAdmin(admin.ModelAdmin):
 @admin.register(Document)
 class DocumentAdmin(admin.ModelAdmin):
     form = DocumentAdminForm
-    list_display = ("code", "title", "revision", "section", "folder", "issue_date", "is_final", "hidden_from", "updated_at")
+    list_display = ("code", "title", "revision", "section", "folder", "issue_date", "is_final", "hidden_from", "content_indexed_at", "updated_at")
     list_filter = ("section", "is_final", "hidden_from_groups")
     search_fields = ("title", "code", "folder", "notes")
     list_editable = ("is_final",)
     date_hierarchy = "issue_date"
     filter_horizontal = ("hidden_from_groups",)
-    actions = ["move_to_folder", "clone_as_template"]
+    actions = ["move_to_folder", "clone_as_template", "reindex_selected"]
+    # content_text/content_indexed_at are populated by `manage.py index_qms_documents`
+    # (or the reindex action below), never hand-edited.
+    readonly_fields = ("content_indexed_at", "content_text")
 
     @admin.display(description="Hidden from")
     def hidden_from(self, obj):
@@ -318,6 +321,23 @@ class DocumentAdmin(admin.ModelAdmin):
         if not obj.uploaded_by:
             obj.uploaded_by = request.user
         super().save_model(request, obj, form, change)
+
+    @admin.action(description="Reindex selected documents (extract searchable text)")
+    def reindex_selected(self, request, queryset):
+        from django.utils import timezone
+        from .content import extract_document_text
+
+        indexed = unsupported = 0
+        for document in queryset:
+            text = extract_document_text(document)
+            if text is None:
+                unsupported += 1
+            else:
+                document.content_text = text
+                indexed += 1
+            document.content_indexed_at = timezone.now()
+            document.save(update_fields=["content_text", "content_indexed_at"])
+        self.message_user(request, f"Reindexed {indexed} document(s); {unsupported} unsupported/unreadable format(s).")
 
     @admin.action(description="Move selected documents to a different folder…")
     def move_to_folder(self, request, queryset):

@@ -1,15 +1,23 @@
-"""Best-effort file text extraction, shared by the AI assistant and the
-in-content search on the browse page."""
+"""Best-effort file text extraction, shared by the AI assistant, the
+`index_qms_documents` command, and in-content search on the browse page.
+
+.doc (legacy binary Word format) is intentionally NOT supported — there's no
+reliable pure-Python extractor available in this environment (no LibreOffice/
+antiword installed), and a raw byte-scrape heuristic produces mangled text
+that would pollute search results more than it would help. .doc files are
+still fully visible/downloadable everywhere else in the app; they just won't
+match a content search."""
 import csv
 import io
 
+import xlrd
 from docx import Document as DocxDocument
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
 MAX_CONTENT_CHARS = 12000
 MAX_PDF_PAGES = 40
-SUPPORTED_CONTENT_EXTS = (".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt")
+SUPPORTED_CONTENT_EXTS = (".pdf", ".docx", ".xlsx", ".xls", ".csv", ".md", ".txt")
 
 
 def extract_document_text(document):
@@ -48,6 +56,16 @@ def extract_document_text(document):
                     if cells:
                         parts.append(" | ".join(cells))
             text = "\n".join(parts)
+        elif name.endswith(".xls"):
+            book = xlrd.open_workbook(file_contents=data)
+            parts = []
+            for sheet in book.sheets():
+                parts.append(f"[Sheet: {sheet.name}]")
+                for row_idx in range(sheet.nrows):
+                    cells = [str(c) for c in sheet.row_values(row_idx) if c not in (None, "")]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            text = "\n".join(parts)
         elif name.endswith(".csv"):
             rows = csv.reader(io.StringIO(data.decode("utf-8", errors="ignore")))
             text = "\n".join(" | ".join(row) for row in rows)
@@ -56,7 +74,9 @@ def extract_document_text(document):
     except Exception:
         return None
 
-    text = text.strip()
+    # Postgres text columns can't store NUL bytes at all (psycopg2 raises
+    # ValueError on insert) — some PDFs/legacy files decode with stray \x00s.
+    text = text.replace("\x00", "").strip()
     if not text:
         return ""
     if len(text) > MAX_CONTENT_CHARS:

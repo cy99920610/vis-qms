@@ -50,9 +50,7 @@
         <button type="submit">Search</button>
       </form>
       {% if content_search and q %}
-        <p class="hint" style="margin:10px 2px 0">
-          Searched inside PDF/DOCX/XLSX/CSV/MD/TXT files for “{{ q }}”{% if content_truncated %} — checked the {{ content_scan_limit }} most recent matching documents; narrow with a section or folder for full coverage{% endif %}.
-        </p>
+        <p class="hint" style="margin:10px 2px 0">Searched document text (PDF/DOCX/XLSX/XLS/CSV/MD/TXT) for “{{ q }}”.</p>
       {% endif %}
     </div>
     <div class="card">
@@ -62,8 +60,9 @@
         {% for d in page %}
         {% with can_prev=d|ext_in:preview_formats can_dl=d|ext_in:download_formats %}
         <tr class="doc-row" {% if can_prev %}onclick="rowClicked(event, '{% url 'library:download' d.pk %}', {{ d.is_pdf|yesno:'true,false' }})"{% endif %}>
-          <td class="c-doc">{{ d.title }}{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}
+          <td class="c-doc">{{ d.title }} <span class="qms-badge qms-grey">{{ d|file_ext }}</span>{% if not d.is_final %} <span class="badge draft">draft</span>{% endif %}
             {% if d.notes and can_view_notes %}<div class="hint" style="margin-top:2px">{{ d.notes }}</div>{% endif %}
+            {% if d.snippet %}<div class="hint search-snippet" style="margin-top:2px">{{ d.snippet }}</div>{% endif %}
           </td>
           <td class="c-folder" style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ d.folder }}">{{ d.folder }}</td>
           <td class="c-issued">{{ d.issue_date|date:"d/m/Y" }}</td>

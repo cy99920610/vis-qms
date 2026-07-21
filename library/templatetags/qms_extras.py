@@ -16,6 +16,11 @@ def join_titles(tasks):
     return "; ".join(t.title for t in tasks)
 
 
+def _file_ext(document):
+    name = document.file.name
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
 @register.filter
 def ext_in(document, allowed_formats):
     """True if `document`'s file extension is in `allowed_formats` (a set
@@ -23,6 +28,10 @@ def ext_in(document, allowed_formats):
     unrestricted (management/superuser)."""
     if allowed_formats is None:
         return True
-    name = document.file.name
-    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    return ext in allowed_formats
+    return _file_ext(document) in allowed_formats
+
+
+@register.filter
+def file_ext(document):
+    """Uppercase file extension for display, e.g. 'PDF'."""
+    return _file_ext(document).upper()

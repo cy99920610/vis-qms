@@ -2,7 +2,6 @@ import calendar as calendar_module
 import json
 import re
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 from django.contrib import messages
@@ -13,16 +12,15 @@ from django.db.models import Q
 from django.http import FileResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.html import escape
+from django.utils.safestring import mark_safe
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
-from .content import extract_document_text
 from .models import (
     Document, DownloadLog, QmsEntity, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask,
     RoleAccessProfile, ROLE_PROFILE_DEFAULTS, Section,
 )
-
-CONTENT_SEARCH_SCAN_LIMIT = 60
 
 
 def visible_sections(user):
@@ -241,26 +239,45 @@ def distinct_formats(qs):
     return sorted(exts)
 
 
-def search_document_contents(qs, keyword, limit=CONTENT_SEARCH_SCAN_LIMIT):
-    """Scans the most recent `limit` documents in qs for keyword inside the
-    actual file text (PDF/DOCX/XLSX/CSV/MD/TXT only). Returns a Document
-    queryset of the matches, most recent first. Fetches run in parallel
-    since each is a network round-trip to file storage."""
-    candidates = list(qs.order_by("-issue_date")[:limit])
-    needle = keyword.lower()
+def _keyword_query(fields, keyword):
+    """AND across words in `keyword`, OR across `fields` for each word —
+    e.g. two-word "annual appraisal" requires both words present, each
+    matched in any of the given fields."""
+    q = Q()
+    for word in keyword.split():
+        word_q = Q()
+        for field in fields:
+            word_q |= Q(**{f"{field}__icontains": word})
+        q &= word_q
+    return q
 
-    def matches(doc):
-        text = extract_document_text(doc)
-        return doc.pk if text and needle in text.lower() else None
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        matched_ids = [pk for pk in pool.map(matches, candidates) if pk]
+def build_snippet(text, keyword, context=70):
+    """A short excerpt of `text` around the first matching word from
+    `keyword`, with every occurrence of every query word wrapped in <mark>.
+    Escapes first, then highlights, so this is always safe to render
+    unescaped (it returns a mark_safe string)."""
+    words = [w for w in keyword.split() if w]
+    if not text or not words:
+        return ""
+    lower = text.lower()
+    positions = [lower.find(w.lower()) for w in words]
+    positions = [p for p in positions if p != -1]
+    if not positions:
+        return ""
 
-    order = {pk: i for i, pk in enumerate(matched_ids)}
-    return sorted(
-        Document.objects.filter(pk__in=matched_ids),
-        key=lambda d: order[d.pk],
-    )
+    idx = min(positions)
+    start = max(0, idx - context)
+    end = min(len(text), idx + context + max(len(w) for w in words))
+    snippet = " ".join(text[start:end].split())
+    prefix = "… " if start > 0 else ""
+    suffix = " …" if end < len(text) else ""
+
+    highlighted = escape(prefix + snippet + suffix)
+    for word in sorted(set(words), key=len, reverse=True):
+        pattern = re.compile(re.escape(escape(word)), re.IGNORECASE)
+        highlighted = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", highlighted)
+    return mark_safe(highlighted)
 
 
 @login_required
@@ -281,12 +298,11 @@ def browse(request):
     if fmt:
         qs = qs.filter(file__iendswith="." + fmt)
 
-    content_truncated = False
-    if q and content_search:
-        content_truncated = qs.count() > CONTENT_SEARCH_SCAN_LIMIT
-        qs = search_document_contents(qs, q)
-    elif q:
-        qs = qs.filter(Q(title__icontains=q) | Q(code__icontains=q) | Q(folder__icontains=q) | Q(notes__icontains=q))
+    if q:
+        fields = ["title", "code", "folder", "notes"]
+        if content_search:
+            fields.append("content_text")
+        qs = qs.filter(_keyword_query(fields, q))
 
     tree = build_folder_tree(base_qs, user_sections, current_folder=folder)
     # base_qs is already format-filtered by visible_documents(), so this
@@ -295,11 +311,17 @@ def browse(request):
     preview_formats, download_formats, access_profile = get_access_context(request.user)
 
     page = Paginator(qs, 50).get_page(request.GET.get("page"))
+    if content_search and q:
+        for d in page.object_list:
+            d.snippet = build_snippet(d.content_text, q)
+    else:
+        for d in page.object_list:
+            d.snippet = ""
+
     return render(request, "library/browse.html", {
         "page": page, "q": q, "section": section, "folder": folder, "format": fmt,
         "sections": user_sections, "formats": formats, "role": user_role(request.user), "tree": tree,
-        "content_search": content_search, "content_truncated": content_truncated,
-        "content_scan_limit": CONTENT_SEARCH_SCAN_LIMIT,
+        "content_search": content_search,
         "preview_formats": preview_formats, "download_formats": download_formats,
         "can_view_notes": access_profile.can_view_internal_notes if access_profile else True,
     })

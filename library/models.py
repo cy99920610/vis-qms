@@ -54,6 +54,10 @@ class Document(models.Model):
     hidden_from_groups = models.ManyToManyField(Group, blank=True, related_name="hidden_documents",
         help_text="Members of these groups won't see this specific document — in the library, search, "
                    "or AI assistant — even if its section is otherwise visible to them. Management/superusers always see everything.")
+    content_text = models.TextField(blank=True,
+        help_text="Extracted searchable text, populated by `manage.py index_qms_documents`. Not editable here.")
+    content_indexed_at = models.DateTimeField(null=True, blank=True,
+        help_text="When content_text was last (re)extracted. Blank means never indexed.")
 
     class Meta:
         ordering = ["section", "folder", "title"]
