@@ -1,4 +1,5 @@
 import calendar as calendar_module
+import io
 import json
 import re
 from collections import Counter
@@ -21,6 +22,8 @@ from .models import (
     Document, DownloadLog, QmsEntity, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask,
     RoleAccessProfile, ROLE_PROFILE_DEFAULTS, Section,
 )
+
+RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
 def visible_sections(user):
@@ -403,7 +406,33 @@ def download(request, pk):
         return HttpResponseForbidden("You do not have permission to access this document format.")
 
     DownloadLog.objects.create(document=doc, user=request.user)
-    return FileResponse(doc.file.open("rb"), as_attachment=force_download, filename=doc.file.name.split("/")[-1])
+    filename = doc.file.name.split("/")[-1]
+
+    # Chrome's built-in PDF viewer always probes with a Range request before
+    # rendering an embedded PDF; without a real 206 response it fails to
+    # parse the file and renders a blank/black page (this is what was
+    # breaking the PDF preview panel/modal). django.http.FileResponse
+    # doesn't implement Range handling itself (that's only built into
+    # django.views.static.serve), so it's done by hand here.
+    range_match = None if force_download else RANGE_RE.match(request.headers.get("Range", ""))
+    if range_match:
+        file_size = doc.file.size
+        start = int(range_match.group(1)) if range_match.group(1) else 0
+        end = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+        end = min(end, file_size - 1)
+        length = end - start + 1
+
+        with doc.file.open("rb") as f:
+            f.seek(start)
+            chunk = f.read(length)
+        response = FileResponse(io.BytesIO(chunk), filename=filename)
+        response.status_code = 206
+        response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+        response["Content-Length"] = str(length)
+    else:
+        response = FileResponse(doc.file.open("rb"), as_attachment=force_download, filename=filename)
+    response["Accept-Ranges"] = "bytes"
+    return response
 
 
 def qms_can_edit(user, task):
