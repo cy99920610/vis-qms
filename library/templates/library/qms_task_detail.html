@@ -71,6 +71,11 @@
         <div class="doc-picker-results"></div>
       </div>
     </p>
+
+    <div class="doc-preview-panel" id="evidence-preview" data-preview-url-base="{% url 'library:document_preview_info' 0 %}">
+      <p class="hint">No evidence document linked yet.</p>
+    </div>
+
     <button type="submit">Save changes</button>
   </form>
 
@@ -103,6 +108,15 @@
   var searchUrl = picker.dataset.searchUrl;
   var debounceTimer = null;
 
+  var previewPanel = document.getElementById('evidence-preview');
+  var previewUrlBase = previewPanel ? previewPanel.dataset.previewUrlBase : null;
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
   if (picker.dataset.currentId) {
     hidden.value = picker.dataset.currentId;
     input.value = picker.dataset.currentText;
@@ -120,14 +134,15 @@
         var item = document.createElement('div');
         item.className = 'doc-picker-item';
         item.innerHTML =
-          '<span class="qms-badge qms-grey">' + d.format + '</span>' +
-          '<span class="doc-picker-item-text">' + d.text + '</span>' +
-          '<span class="doc-picker-item-folder">' + d.folder + '</span>';
+          '<span class="qms-badge qms-grey">' + escapeHtml(d.format) + '</span>' +
+          '<span class="doc-picker-item-text">' + escapeHtml(d.text) + '</span>' +
+          '<span class="doc-picker-item-folder">' + escapeHtml(d.folder) + '</span>';
         item.addEventListener('mousedown', function (e) {
           e.preventDefault();
           hidden.value = d.id;
           input.value = d.text;
           results.style.display = 'none';
+          loadPreview(d.id);
         });
         results.appendChild(item);
       });
@@ -144,6 +159,7 @@
 
   input.addEventListener('input', function () {
     hidden.value = '';
+    showNoDocument();
     clearTimeout(debounceTimer);
     var q = input.value;
     debounceTimer = setTimeout(function () { search(q); }, 250);
@@ -156,8 +172,65 @@
     hidden.value = '';
     input.value = '';
     results.style.display = 'none';
+    showNoDocument();
     input.focus();
   });
+
+  // --- Same-page preview panel ---
+
+  function showNoDocument() {
+    if (!previewPanel) return;
+    previewPanel.innerHTML = '<p class="hint">No evidence document linked yet.</p>';
+  }
+
+  function showNoPermission() {
+    if (!previewPanel) return;
+    previewPanel.innerHTML = '<p class="hint">You do not have permission to preview this document.</p>';
+  }
+
+  function renderPreview(data) {
+    if (!previewPanel) return;
+    if (!data || !data.allowed) { showNoPermission(); return; }
+
+    var actions = [];
+    if (data.embed_type === 'pdf') {
+      actions.push('<button type="button" class="link-btn" onclick="openPdfPreview(\'' + data.preview_url + '\')">Preview</button>');
+    }
+    actions.push('<a href="' + data.preview_url + '" target="_blank" rel="noopener">Open in new tab</a>');
+    if (data.download_url) {
+      actions.push('<a href="' + data.download_url + '">Download</a>');
+    }
+
+    var html = '<div class="doc-preview-meta">' +
+      '<div><b>' + escapeHtml(data.code ? data.code + ' — ' + data.title : data.title) + '</b> ' +
+      '<span class="qms-badge qms-grey">' + escapeHtml(data.format) + '</span>' +
+      (data.is_final ? '' : ' <span class="badge draft">draft</span>') + '</div>' +
+      '<div class="hint">' + escapeHtml(data.folder || '—') +
+      (data.issue_date ? ' &middot; issued ' + escapeHtml(data.issue_date) : '') + '</div>' +
+      '<div class="doc-preview-actions">' + actions.join(' &middot; ') + '</div>' +
+      '</div>';
+
+    if (data.embed_type === 'pdf') {
+      html += '<iframe src="' + data.preview_url + '" class="doc-preview-embed"></iframe>';
+    } else if (data.embed_type === 'text' && data.text_preview) {
+      html += '<pre class="doc-preview-text">' + escapeHtml(data.text_preview) + '</pre>';
+    }
+    previewPanel.innerHTML = html;
+  }
+
+  function loadPreview(id) {
+    if (!previewPanel || !previewUrlBase) return;
+    if (!id) { showNoDocument(); return; }
+    var url = previewUrlBase.replace(/0\/preview-info\/?$/, id + '/preview-info/');
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(renderPreview)
+      .catch(showNoPermission);
+  }
+
+  if (picker.dataset.currentId) {
+    loadPreview(picker.dataset.currentId);
+  }
 })();
 </script>
 {% endblock %}

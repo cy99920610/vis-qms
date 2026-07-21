@@ -87,25 +87,10 @@
   </div>
 </div>
 
-<div id="pdf-modal" class="modal" onclick="if(event.target===this) closePdfPreview()">
-  <div class="modal-box">
-    <div class="modal-bar"><span>Document preview</span><button type="button" class="modal-close" onclick="closePdfPreview()">Close ✕</button></div>
-    <iframe id="pdf-modal-frame" src="" style="width:100%;height:80vh;border:0;display:block"></iframe>
-  </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
 <script>
-function openPdfPreview(url) {
-  document.getElementById('pdf-modal-frame').src = url;
-  document.getElementById('pdf-modal').style.display = 'flex';
-}
-function closePdfPreview() {
-  document.getElementById('pdf-modal').style.display = 'none';
-  document.getElementById('pdf-modal-frame').src = '';
-}
 function rowClicked(e, url, isPdf) {
   if (isPdf) { openPdfPreview(url); }
   else { window.open(url, '_blank'); }

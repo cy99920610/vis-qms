@@ -352,6 +352,44 @@ def document_search_api(request):
 
 
 @login_required
+def document_preview_info(request, pk):
+    """Backs the same-page evidence-document preview panel on the QMS Task
+    detail page. Gated by doc_is_openable() — the same visibility +
+    preview-format check used everywhere else — so a document the user
+    isn't allowed to see or preview yields only {"allowed": False}, with no
+    title/folder/content leaked. Download eligibility is checked separately
+    since RoleAccessProfile allows preview and download formats to differ."""
+    doc = Document.objects.filter(pk=pk).first()
+    if doc is None or not doc_is_openable(request.user, doc):
+        return JsonResponse({"id": pk, "allowed": False})
+
+    ext = file_ext(doc)
+    if ext == "pdf":
+        embed_type = "pdf"
+    elif ext in ("txt", "md"):
+        embed_type = "text"
+    else:
+        embed_type = "none"
+
+    can_download = can_download_format(request.user, ext)
+    return JsonResponse({
+        "id": doc.pk,
+        "allowed": True,
+        "title": doc.title,
+        "code": doc.code,
+        "filename": doc.file.name.rsplit("/", 1)[-1],
+        "folder": doc.folder,
+        "format": ext.upper(),
+        "issue_date": doc.issue_date.isoformat() if doc.issue_date else None,
+        "is_final": doc.is_final,
+        "preview_url": reverse("library:download", args=[doc.pk]),
+        "download_url": reverse("library:download", args=[doc.pk]) + "?dl=1" if can_download else None,
+        "embed_type": embed_type,
+        "text_preview": doc.content_text[:4000] if embed_type == "text" else None,
+    })
+
+
+@login_required
 @xframe_options_sameorigin
 def download(request, pk):
     doc = get_object_or_404(Document, pk=pk)

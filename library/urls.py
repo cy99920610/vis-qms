@@ -8,6 +8,7 @@ urlpatterns = [
     path("doc/<int:pk>/download/", views.download, name="download"),
     path("assistant/ask/", views.assistant_ask, name="assistant_ask"),
     path("api/documents/search-for-link/", views.document_search_api, name="document_search_api"),
+    path("api/documents/<int:pk>/preview-info/", views.document_preview_info, name="document_preview_info"),
     path("qms-calendar/", views.qms_calendar, name="qms_calendar"),
     path("qms-tasks/", views.qms_tasks, name="qms_tasks"),
     path("qms-tasks/<int:pk>/", views.qms_task_detail, name="qms_task_detail"),
