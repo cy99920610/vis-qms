@@ -270,6 +270,9 @@ def browse(request):
     tree = build_folder_tree(base_qs, user_sections, current_folder=folder)
     formats = distinct_formats(base_qs)
     preview_formats, download_formats, access_profile = get_access_context(request.user)
+    if preview_formats is not None:
+        allowed_formats = preview_formats | download_formats
+        formats = [f for f in formats if f in allowed_formats]
 
     page = Paginator(qs, 50).get_page(request.GET.get("page"))
     return render(request, "library/browse.html", {
