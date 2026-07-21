@@ -35,7 +35,7 @@
     </select>
     <select name="entity">
       <option value="">All entities</option>
-      {% for e in entity_choices %}<option value="{{ e }}" {% if entity == e %}selected{% endif %}>{{ e }}</option>{% endfor %}
+      {% for e in entity_choices %}<option value="{{ e.pk }}" {% if entity == e.pk|stringformat:"s" %}selected{% endif %}>{{ e.name }}</option>{% endfor %}
     </select>
     <input type="text" name="iso_clause" value="{{ iso_clause }}" placeholder="ISO clause…" style="width:120px">
     <button type="submit">Filter</button>

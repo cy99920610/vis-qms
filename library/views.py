@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 
 from .content import extract_document_text
 from .models import (
-    Document, DownloadLog, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask,
+    Document, DownloadLog, QmsEntity, QMS_CATEGORY_CHOICES, QMS_STATUS_CHOICES, QMSTask,
     RoleAccessProfile, ROLE_PROFILE_DEFAULTS, Section,
 )
 
@@ -334,7 +334,7 @@ def qms_can_edit(user, task):
 
 
 def _qms_filtered(request):
-    qs = QMSTask.objects.select_related("responsible_person", "related_document")
+    qs = QMSTask.objects.select_related("responsible_person", "related_document", "entity")
     category = request.GET.get("category", "")
     responsible = request.GET.get("responsible", "")
     entity = request.GET.get("entity", "")
@@ -345,7 +345,7 @@ def _qms_filtered(request):
     if responsible:
         qs = qs.filter(responsible_person_id=responsible)
     if entity:
-        qs = qs.filter(entity=entity)
+        qs = qs.filter(entity_id=entity)
     if iso_clause:
         qs = qs.filter(iso_clause__icontains=iso_clause)
     tasks = list(qs)
@@ -362,7 +362,7 @@ def _qms_filter_choices():
         "status_choices": QMS_STATUS_CHOICES,
         "responsible_choices": User.objects.filter(qms_tasks_responsible__isnull=False)
             .distinct().order_by("username"),
-        "entity_choices": QMSTask.objects.exclude(entity="").values_list("entity", flat=True).distinct().order_by("entity"),
+        "entity_choices": QmsEntity.objects.filter(active=True).order_by("name"),
     }
 
 

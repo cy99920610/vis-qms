@@ -11,7 +11,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from .models import (
-    Document, DownloadLog, FORMAT_CHOICES, QMSTask, QMSTaskTemplate,
+    Document, DownloadLog, FORMAT_CHOICES, QmsEntity, QMSTask, QMSTaskTemplate,
     RoleAccessProfile, Section, section_choices,
 )
 from .views import build_folder_tree
@@ -415,12 +415,20 @@ class DocumentAdmin(admin.ModelAdmin):
         }
         return render(request, "admin/library/document/move_to_folder.html", context)
 
+
+@admin.register(QmsEntity)
+class QmsEntityAdmin(admin.ModelAdmin):
+    list_display = ("name", "short_name", "entity_type", "country", "active")
+    list_filter = ("entity_type", "active")
+    search_fields = ("name", "short_name", "country")  # required for use as an autocomplete_fields target
+
+
 @admin.register(QMSTaskTemplate)
 class QMSTaskTemplateAdmin(admin.ModelAdmin):
     list_display = ("name", "category", "recurrence_type", "recurrence_rule", "default_responsible", "is_active")
     list_filter = ("category", "recurrence_type", "is_active")
     search_fields = ("name", "description", "process", "iso_clause")
-    autocomplete_fields = ["related_document"]
+    autocomplete_fields = ["related_document", "default_entity"]
     actions = ["generate_task_now"]
     fieldsets = (
         (None, {"fields": ("name", "category", "description", "is_active")}),
@@ -443,7 +451,7 @@ class QMSTaskAdmin(admin.ModelAdmin):
     search_fields = ("title", "description", "process", "iso_clause", "notes")
     date_hierarchy = "due_date"
     filter_horizontal = ("assigned_users",)
-    autocomplete_fields = ["related_document", "evidence_document"]
+    autocomplete_fields = ["related_document", "evidence_document", "entity"]
     actions = ["mark_completed_action"]
     fieldsets = (
         (None, {"fields": ("title", "description", "category", "template")}),

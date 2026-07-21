@@ -262,6 +262,38 @@ def next_occurrence(base_date, recurrence_type, recurrence_rule=""):
     return None
 
 
+QMS_ENTITY_TYPE_CHOICES = [
+    ("company", "Company"),
+    ("branch", "Branch"),
+    ("liaison_office", "Liaison Office"),
+    ("partner", "Partner"),
+    ("project", "Project"),
+    ("other", "Other"),
+]
+
+
+class QmsEntity(models.Model):
+    """A branch, company, liaison office, or partner that a QMS task/template
+    can be scoped to — the master list behind the Entity dropdown, replacing
+    free-typed entity names on QMSTask/QMSTaskTemplate."""
+    name = models.CharField(max_length=150, unique=True)
+    short_name = models.CharField(max_length=50, blank=True)
+    entity_type = models.CharField(max_length=20, choices=QMS_ENTITY_TYPE_CHOICES, default="branch")
+    country = models.CharField(max_length=80, blank=True)
+    active = models.BooleanField(default=True, help_text="Untick to hide from new task/template dropdowns without deleting history.")
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "QMS entity"
+        verbose_name_plural = "QMS entities"
+
+    def __str__(self):
+        return self.name
+
+
 class QMSTaskTemplate(models.Model):
     """A recurring QMS activity rule (e.g. 'Quarterly Board Meeting'). Holds
     no historical data — it only generates forward-looking QMSTask
@@ -275,8 +307,10 @@ class QMSTaskTemplate(models.Model):
     iso_clause = models.CharField(max_length=40, blank=True, help_text="e.g. 9.2, 9.3, 7.2")
     related_document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="+", help_text="The QMS procedure/form/register this activity follows")
-    default_entity = models.CharField(max_length=100, blank=True,
-        help_text="e.g. VIS-Recruit Cyprus / Ukraine / Asia / Nepal — blank means Group-wide")
+    default_entity_text = models.CharField(max_length=100, blank=True,
+        help_text="Legacy free-text value, kept for reference only — use default_entity below.")
+    default_entity = models.ForeignKey(QmsEntity, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="templates", help_text="Blank means Group-wide")
     default_responsible = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     recurrence_type = models.CharField(max_length=12, choices=QMS_RECURRENCE_CHOICES, default="none")
     recurrence_rule = models.CharField(max_length=20, choices=QMS_RECURRENCE_RULE_CHOICES, blank=True)
@@ -319,7 +353,9 @@ class QMSTask(models.Model):
     process = models.CharField(max_length=200, blank=True)
     iso_clause = models.CharField(max_length=40, blank=True)
     related_document = models.ForeignKey(Document, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
-    entity = models.CharField(max_length=100, blank=True)
+    entity_text = models.CharField(max_length=100, blank=True,
+        help_text="Legacy free-text value, kept for reference only — use entity below.")
+    entity = models.ForeignKey(QmsEntity, null=True, blank=True, on_delete=models.SET_NULL, related_name="tasks")
     responsible_person = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL,
         related_name="qms_tasks_responsible")
     assigned_users = models.ManyToManyField(User, blank=True, related_name="qms_tasks_assigned")
