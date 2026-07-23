@@ -12,7 +12,7 @@ from django.utils.safestring import mark_safe
 
 from .models import (
     Document, DownloadLog, FORMAT_CHOICES, QmsEntity, QMSTask, QMSTaskTemplate,
-    RoleAccessProfile, Section, section_choices,
+    RoleAccessProfile, Section, folder_section_mismatch_error, section_choices,
 )
 from .views import build_folder_tree
 
@@ -189,14 +189,6 @@ class FolderPathWidget(forms.TextInput):
 }})();
 </script>
 """)
-
-
-def folder_section_mismatch_error(section, folder):
-    if section and folder and not (folder == section or folder.startswith(section + "\\")):
-        return (f'Folder must start with the chosen section\'s code ("{section}"), e.g. '
-                f'"{section}\\Some Subfolder" — otherwise the document won\'t appear under '
-                f'this section in the library tree.')
-    return None
 
 
 class DocumentAdminForm(forms.ModelForm):

@@ -1,4 +1,4 @@
-{% load static %}<!DOCTYPE html>
+{% load static qms_extras %}<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -288,6 +288,7 @@ footer{text-align:center;color:var(--faint);font-size:11px;padding:26px 20px}
   <a href="{% url 'library:browse' %}" class="{% if request.resolver_match.url_name == 'browse' %}active{% endif %}">Browse Documents</a>
   <a href="{% url 'library:qms_calendar' %}" class="{% if request.resolver_match.url_name == 'qms_calendar' %}active{% endif %}">QMS Calendar</a>
   <a href="{% url 'library:qms_tasks' %}" class="{% if request.resolver_match.url_name == 'qms_tasks' or request.resolver_match.url_name == 'qms_task_detail' %}active{% endif %}">QMS Tasks</a>
+  {% if user|is_management_user %}<a href="{% url 'library:doc_control' %}" class="{% if request.resolver_match.url_name == 'doc_control' %}active{% endif %}">Document Control</a>{% endif %}
 </nav>
 {% endif %}
 <main>

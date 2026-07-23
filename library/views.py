@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.db.models import Q
-from django.http import FileResponse, HttpResponseForbidden, JsonResponse
+from django.http import FileResponse, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.html import escape
@@ -191,14 +191,30 @@ def build_folder_tree(qs, sections, current_folder=""):
     return tree
 
 
+def is_management(user):
+    return user.is_superuser or user.groups.filter(name="management").exists()
+
+
 def user_role(user):
-    if user.is_superuser or user.groups.filter(name="management").exists():
+    if is_management(user):
         return "management"
     if user.groups.filter(name="internal_auditor").exists():
         return "internal_auditor"
     if user.groups.filter(name="auditor").exists():
         return "auditor"
     return "employee"
+
+
+def management_required(view_func):
+    """Full-page guard for admin-only tools (the Document Control /
+    Maintenance Tool) — unlike visible_documents()'s row-level filtering,
+    this blocks the whole view for non-management roles."""
+    @login_required
+    def wrapper(request, *args, **kwargs):
+        if not is_management(request.user):
+            return HttpResponseForbidden("The Document Control tool is available to QMS Manager/Admin accounts only.")
+        return view_func(request, *args, **kwargs)
+    return wrapper
 
 
 @login_required
@@ -654,4 +670,150 @@ def assistant_ask(request):
         return JsonResponse({"error": True, "reply": "The assistant is temporarily unavailable. Try the search or folder browser instead.", "documents": []})
 
     request.session["assistant_history"] = new_history
+    return JsonResponse({"error": False, "reply": reply, "documents": documents})
+
+
+# ---------------------------------------------------------------------------
+# Document Control / Maintenance Tool (admin-only)
+# ---------------------------------------------------------------------------
+
+def _doc_control_filters(request):
+    """Read + apply the per-column filters for the Final Approved PDF
+    Register. The is_final/PDF floor is always applied — that's the
+    'dynamically show final approved PDF documents only' requirement — every
+    other filter only narrows further."""
+    filters = {
+        "code": request.GET.get("code", "").strip(),
+        "title": request.GET.get("title", "").strip(),
+        "revision": request.GET.get("revision", "").strip(),
+        "section": request.GET.get("section", "").strip(),
+        "folder": request.GET.get("folder", "").strip(),
+        "uploaded_by": request.GET.get("uploaded_by", "").strip(),
+        "issue_from": request.GET.get("issue_from", "").strip(),
+        "issue_to": request.GET.get("issue_to", "").strip(),
+    }
+    qs = Document.objects.filter(is_final=True, file__iendswith=".pdf").select_related("uploaded_by")
+    if filters["code"]:
+        qs = qs.filter(code__icontains=filters["code"])
+    if filters["title"]:
+        qs = qs.filter(title__icontains=filters["title"])
+    if filters["revision"]:
+        qs = qs.filter(revision__icontains=filters["revision"])
+    if filters["section"]:
+        qs = qs.filter(section=filters["section"])
+    if filters["folder"]:
+        qs = qs.filter(folder__icontains=filters["folder"])
+    if filters["uploaded_by"]:
+        qs = qs.filter(uploaded_by_id=filters["uploaded_by"])
+    if filters["issue_from"]:
+        qs = qs.filter(issue_date__gte=filters["issue_from"])
+    if filters["issue_to"]:
+        qs = qs.filter(issue_date__lte=filters["issue_to"])
+    return qs.order_by("section", "folder", "code", "title"), filters
+
+
+@management_required
+def doc_control(request):
+    from .watchdog import run_watchdog_checks
+
+    qs, filters = _doc_control_filters(request)
+    page = Paginator(qs, 50).get_page(request.GET.get("page"))
+
+    uploader_ids = Document.objects.exclude(uploaded_by__isnull=True).values_list("uploaded_by", flat=True).distinct()
+    uploaders = User.objects.filter(pk__in=uploader_ids).order_by("username")
+
+    findings, summary = run_watchdog_checks()
+    watchdog_category = request.GET.get("wd_category", "").strip()
+    shown_findings = [f for f in findings if not watchdog_category or f["category"] == watchdog_category]
+
+    export_params = request.GET.copy()
+    export_params.pop("page", None)
+    high_count = sum(1 for f in findings if f["severity"] == "high")
+
+    return render(request, "library/doc_control.html", {
+        "role": user_role(request.user),
+        "page": page,
+        "filters": filters,
+        "sections": list(Section.objects.values_list("code", "label")),
+        "uploaders": uploaders,
+        "register_count": qs.count(),
+        "findings": shown_findings[:300],
+        "findings_shown_count": len(shown_findings),
+        "findings_total": len(findings),
+        "findings_high_count": high_count,
+        "summary": summary,
+        "watchdog_category": watchdog_category,
+        "export_qs": export_params.urlencode(),
+    })
+
+
+@management_required
+def doc_control_watchdog_api(request):
+    from .watchdog import run_watchdog_checks
+
+    findings, _ = run_watchdog_checks()
+    category = request.GET.get("wd_category", "").strip()
+    if category:
+        findings = [f for f in findings if f["category"] == category]
+
+    return JsonResponse({
+        "category": category,
+        "total_count": len(findings),
+        "findings": findings[:300],
+    })
+
+
+@management_required
+def doc_control_export(request, fmt, dataset):
+    from . import exports
+    from .watchdog import run_watchdog_checks
+
+    if fmt not in ("xlsx", "pdf") or dataset not in ("register", "watchdog"):
+        return HttpResponseForbidden("Unknown export requested.")
+
+    if dataset == "register":
+        qs, _ = _doc_control_filters(request)
+        buf = exports.register_xlsx(qs) if fmt == "xlsx" else exports.register_pdf(qs)
+        filename = f"VIS-QMS_Final_PDF_Register.{fmt}"
+    else:
+        findings, _ = run_watchdog_checks()
+        category = request.GET.get("wd_category", "").strip()
+        if category:
+            findings = [f for f in findings if f["category"] == category]
+        buf = exports.findings_xlsx(findings) if fmt == "xlsx" else exports.findings_pdf(findings)
+        filename = f"VIS-QMS_Watchdog_Findings.{fmt}"
+
+    content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if fmt == "xlsx" else "application/pdf"
+    response = HttpResponse(buf.getvalue(), content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@management_required
+@require_POST
+def doc_control_agent_ask(request):
+    from . import qms_agent
+    import anthropic
+
+    try:
+        body = json.loads(request.body)
+        message = body.get("message", "").strip()
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return JsonResponse({"error": True, "reply": "Invalid request.", "documents": []}, status=400)
+    if not message:
+        return JsonResponse({"error": True, "reply": "Please enter a question.", "documents": []}, status=400)
+
+    history = request.session.get("qms_agent_history", [])
+    try:
+        reply, documents, new_history = qms_agent.run_qms_agent_turn(request.user, message, history)
+    except RuntimeError:
+        return JsonResponse({"error": True, "reply": "The QMS agent isn't configured yet (missing API key).", "documents": []})
+    except anthropic.APITimeoutError:
+        return JsonResponse({"error": True, "reply": "The QMS agent timed out — please try again.", "documents": []})
+    except anthropic.APIConnectionError:
+        return JsonResponse({"error": True, "reply": "Could not reach the assistant service.", "documents": []})
+    except anthropic.APIStatusError:
+        return JsonResponse({"error": True, "reply": "The QMS agent is temporarily unavailable.", "documents": []})
+
+    request.session["qms_agent_history"] = new_history
     return JsonResponse({"error": False, "reply": reply, "documents": documents})

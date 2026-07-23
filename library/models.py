@@ -71,6 +71,18 @@ class Document(models.Model):
         return self.file.name.lower().endswith(".pdf")
 
 
+def folder_section_mismatch_error(section, folder):
+    """Shared by the admin form (DocumentAdminForm/MoveToFolderForm) and the
+    Document Control Watchdog's folder/status check — kept here (rather than
+    in admin.py) so watchdog.py can import it without an admin<->views<->
+    watchdog circular import."""
+    if section and folder and not (folder == section or folder.startswith(section + "\\")):
+        return (f'Folder must start with the chosen section\'s code ("{section}"), e.g. '
+                f'"{section}\\Some Subfolder" — otherwise the document won\'t appear under '
+                f'this section in the library tree.')
+    return None
+
+
 ROLE_CHOICES = [
     ("employee", "Employee"),
     ("auditor", "External Auditor"),

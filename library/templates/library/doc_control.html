@@ -1,0 +1,307 @@
+{% extends "library/base.html" %}
+{% block title %}Document Control{% endblock %}
+{% block content %}
+<div class="rolebar">Role: <b>{{ role }}</b> — admin-only Document Control / Maintenance Tool. Read-only: nothing here moves, deletes, or overwrites a document.</div>
+
+<div class="qms-stat-row">
+  <div class="stat-card total"><div class="n">{{ register_count }}</div><div class="l">Final approved PDF documents</div></div>
+  <div class="stat-card"><div class="n">{{ findings_total }}</div><div class="l">Watchdog findings</div></div>
+  <div class="stat-card"><div class="n">{{ findings_high_count }}</div><div class="l">High severity</div></div>
+</div>
+
+<div class="card">
+  <h2>Final Approved PDF Document Register</h2>
+  <p class="hint">Dynamically scoped to documents marked Final with a .pdf file — the QP-05A1-style controlled register. Filter across any column below; export reflects the current filters.</p>
+  <form method="get" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+    <input type="text" name="code" value="{{ filters.code }}" placeholder="Code…" style="width:110px">
+    <input type="text" name="title" value="{{ filters.title }}" placeholder="Title contains…" style="flex:1;min-width:160px">
+    <input type="text" name="revision" value="{{ filters.revision }}" placeholder="Revision…" style="width:100px">
+    <select name="section">
+      <option value="">All sections</option>
+      {% for code,label in sections %}<option value="{{ code }}" {% if filters.section == code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <input type="text" name="folder" value="{{ filters.folder }}" placeholder="Folder contains…" style="width:170px">
+    <select name="uploaded_by">
+      <option value="">Anyone</option>
+      {% for u in uploaders %}<option value="{{ u.id }}" {% if filters.uploaded_by == u.id|stringformat:"s" %}selected{% endif %}>{{ u.get_full_name|default:u.username }}</option>{% endfor %}
+    </select>
+    <label class="hint" style="display:flex;align-items:center;gap:4px">From <input type="date" name="issue_from" value="{{ filters.issue_from }}" style="width:145px"></label>
+    <label class="hint" style="display:flex;align-items:center;gap:4px">To <input type="date" name="issue_to" value="{{ filters.issue_to }}" style="width:145px"></label>
+    <button type="submit">Filter</button>
+    <a href="{% url 'library:doc_control' %}" style="font-size:12px;color:var(--muted)">Clear</a>
+    <span style="margin-left:auto;display:flex;gap:8px">
+      <a href="{% url 'library:doc_control_export' dataset='register' fmt='xlsx' %}?{{ export_qs }}"><button type="button" class="secondary">Export Excel</button></a>
+      <a href="{% url 'library:doc_control_export' dataset='register' fmt='pdf' %}?{{ export_qs }}"><button type="button" class="secondary">Export PDF</button></a>
+    </span>
+  </form>
+</div>
+
+<div class="card">
+  <div class="table-scroll">
+  <table class="qms-table" style="min-width:1100px">
+    <tr>
+      <th style="width:9%">Code</th><th style="width:24%">Title</th><th style="width:8%">Revision</th>
+      <th style="width:14%">Section</th><th style="width:20%">Folder</th><th style="width:9%">Issue Date</th>
+      <th style="width:11%">Uploaded By</th><th style="width:5%">&nbsp;</th>
+    </tr>
+    {% for d in page %}
+    <tr class="qms-row" onclick="window.open('{% url 'admin:library_document_change' d.pk %}', '_blank')">
+      <td title="{{ d.code }}">{{ d.code|default:"—" }}</td>
+      <td title="{{ d.title }}">{{ d.title }}</td>
+      <td>{{ d.revision|default:"—" }}</td>
+      <td title="{{ d.get_section_display }}">{{ d.get_section_display }}</td>
+      <td title="{{ d.folder }}">{{ d.folder }}</td>
+      <td>{{ d.issue_date|date:"d M Y"|default:"—" }}</td>
+      <td>{% if d.uploaded_by %}{{ d.uploaded_by.get_full_name|default:d.uploaded_by.username }}{% else %}—{% endif %}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        <button type="button" class="link-btn" onclick="docControlPreview({{ d.pk }})">Preview</button>
+        &middot; <a href="{% url 'admin:library_document_change' d.pk %}" target="_blank" rel="noopener">Open</a>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="8">No final PDF documents match these filters.</td></tr>{% endfor %}
+  </table>
+  </div>
+  <p class="pag">
+    {% if page.has_previous %}<a href="?{{ export_qs }}&page={{ page.previous_page_number }}">&laquo; prev</a>{% endif %}
+    page {{ page.number }} / {{ page.paginator.num_pages }} ({{ page.paginator.count }} documents)
+    {% if page.has_next %}<a href="?{{ export_qs }}&page={{ page.next_page_number }}">next &raquo;</a>{% endif %}
+  </p>
+
+  <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+  <h2 style="margin-bottom:4px">Preview</h2>
+  <p class="hint">Click "Preview" on a row above (or in the Watchdog table below) to view the document here, in this same window — no new tab, no admin round-trip.</p>
+  <div class="doc-preview-panel" id="doc-control-preview" data-preview-url-base="{% url 'library:document_preview_info' 0 %}" style="max-width:none">
+    <p class="hint">No document selected yet.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Document Control Watchdog</h2>
+  <p class="hint">Consistency checks across the whole library (not just the final-PDF register above) — this is where drafts, obsolete records, and hidden documents get inspected for problems.</p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0" id="wd-category-bar">
+    <a href="{% url 'library:doc_control' %}" class="wd-cat-link" data-category="" data-inactive-class="qms-grey" style="text-decoration:none" onclick="loadWatchdogCategory('', event)">
+      <span class="qms-badge {% if not watchdog_category %}qms-blue{% else %}qms-grey{% endif %}">All ({{ findings_total }})</span>
+    </a>
+    {% for key, s in summary.items %}
+    <a href="?wd_category={{ key }}" class="wd-cat-link" data-category="{{ key }}" data-inactive-class="{% if s.high %}qms-red{% elif s.medium %}qms-yellow{% else %}qms-grey{% endif %}" style="text-decoration:none" onclick="loadWatchdogCategory('{{ key }}', event)">
+      <span class="qms-badge {% if watchdog_category == key %}qms-blue{% elif s.high %}qms-red{% elif s.medium %}qms-yellow{% else %}qms-grey{% endif %}">{{ s.label }} ({{ s.count }})</span>
+    </a>
+    {% endfor %}
+  </div>
+  <p class="hint" id="wd-category-hint">Click a category above to open its documents/findings below, in place — no page reload.</p>
+  <div style="display:flex;gap:8px;margin-bottom:10px">
+    <a href="{% url 'library:doc_control_export' dataset='watchdog' fmt='xlsx' %}{% if watchdog_category %}?wd_category={{ watchdog_category }}{% endif %}" id="wd-export-xlsx"><button type="button" class="secondary">Export Excel</button></a>
+    <a href="{% url 'library:doc_control_export' dataset='watchdog' fmt='pdf' %}{% if watchdog_category %}?wd_category={{ watchdog_category }}{% endif %}" id="wd-export-pdf"><button type="button" class="secondary">Export PDF</button></a>
+  </div>
+  <div class="table-scroll">
+  <table class="qms-table" style="min-width:1100px">
+    <tr><th style="width:8%">Severity</th><th style="width:16%">Category</th><th style="width:9%">Code</th><th style="width:16%">Title</th><th style="width:18%">Folder</th><th style="width:28%">Finding</th><th style="width:5%">&nbsp;</th></tr>
+    <tbody id="wd-findings-body">
+    {% for f in findings %}
+    <tr class="qms-row" onclick="window.open('{{ f.admin_url }}', '_blank')">
+      <td><span class="qms-badge {% if f.severity == 'high' %}qms-red{% elif f.severity == 'medium' %}qms-yellow{% else %}qms-grey{% endif %}">{{ f.severity|upper }}</span></td>
+      <td title="{{ f.category_label }}">{{ f.category_label }}</td>
+      <td>{{ f.code|default:"—" }}</td>
+      <td title="{{ f.title }}">{{ f.title }}</td>
+      <td title="{{ f.folder }}">{{ f.folder|default:"—" }}</td>
+      <td style="white-space:normal">{{ f.message }}</td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap">
+        {% if f.target_type == "document" %}<button type="button" class="link-btn" onclick="event.stopPropagation();docControlPreview({{ f.target_id }})">Preview</button> &middot; {% endif %}
+        <a href="{{ f.admin_url }}" target="_blank" rel="noopener">Open</a>
+      </td>
+    </tr>
+    {% empty %}<tr><td colspan="7">No inconsistencies in this category. 🎉</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint" id="wd-shown-note" style="margin-top:8px{% if findings_shown_count <= 300 %};display:none{% endif %}">Showing the first 300 of {{ findings_shown_count }} findings on screen — export to Excel/PDF for the full list.</p>
+</div>
+
+<div class="card">
+  <div class="agent-head" style="padding:0 0 12px">
+    <h2>Ask the QMS Document-Control Agent</h2>
+    <p class="hint">Ask what needs to change when creating or revising a document, or what a specific Watchdog finding means — e.g. "what do I need to update when I revise QP-04?" or "is QM-01 ready to be marked final?"</p>
+  </div>
+  <div id="qms-agent-log" class="chat-log" style="max-height:320px;border:1px solid var(--line);border-radius:8px;margin-bottom:10px">
+    <div class="chat-msg bot">Hi — I'm the Document Control Agent. Ask me about revision/approval requirements, or what a Watchdog finding means and how to fix it.</div>
+  </div>
+  <form id="qms-agent-form" class="chat-form" style="border:1px solid var(--line);border-radius:8px">
+    <input type="text" id="qms-agent-input" placeholder="Ask a question…" autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function getCookie(name) {
+  var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return m ? m.pop() : '';
+}
+
+// --- Same-page document preview (below the register table) ---
+(function () {
+  var panel = document.getElementById('doc-control-preview');
+  if (!panel) return;
+  var previewUrlBase = panel.dataset.previewUrlBase;
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  function showNoPermission() {
+    panel.innerHTML = '<p class="hint">You do not have permission to preview this document.</p>';
+  }
+
+  function renderPreview(data) {
+    if (!data || !data.allowed) { showNoPermission(); return; }
+
+    var actions = [];
+    actions.push('<a href="' + data.preview_url + '" target="_blank" rel="noopener">Open in new tab</a>');
+    if (data.download_url) {
+      actions.push('<a href="' + data.download_url + '">Download</a>');
+    }
+
+    var html = '<div class="doc-preview-meta">' +
+      '<div><b>' + escapeHtml(data.code ? data.code + ' — ' + data.title : data.title) + '</b> ' +
+      '<span class="qms-badge qms-grey">' + escapeHtml(data.format) + '</span>' +
+      (data.is_final ? '' : ' <span class="badge draft">draft</span>') + '</div>' +
+      '<div class="hint">' + escapeHtml(data.folder || '—') +
+      (data.issue_date ? ' &middot; issued ' + escapeHtml(data.issue_date) : '') + '</div>' +
+      '<div class="doc-preview-actions">' + actions.join(' &middot; ') + '</div>' +
+      '</div>';
+
+    if (data.embed_type === 'pdf') {
+      html += '<iframe src="' + data.preview_url + '" class="doc-preview-embed" style="height:640px"></iframe>';
+    } else if (data.embed_type === 'text' && data.text_preview) {
+      html += '<pre class="doc-preview-text">' + escapeHtml(data.text_preview) + '</pre>';
+    }
+    panel.innerHTML = html;
+  }
+
+  window.docControlPreview = function (id) {
+    if (!id || !previewUrlBase) return;
+    panel.innerHTML = '<p class="hint">Loading…</p>';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    var url = previewUrlBase.replace(/0\/preview-info\/?$/, id + '/preview-info/');
+    fetch(url).then(function (r) { return r.json(); }).then(renderPreview).catch(showNoPermission);
+  };
+})();
+
+// --- Same-page Watchdog category filter (click a badge, findings open below in place) ---
+(function () {
+  var bar = document.getElementById('wd-category-bar');
+  var tbody = document.getElementById('wd-findings-body');
+  var hint = document.getElementById('wd-category-hint');
+  var shownNote = document.getElementById('wd-shown-note');
+  var exportXlsx = document.getElementById('wd-export-xlsx');
+  var exportPdf = document.getElementById('wd-export-pdf');
+  if (!bar || !tbody) return;
+
+  var apiUrl = "{% url 'library:doc_control_watchdog_api' %}";
+  var exportXlsxBase = "{% url 'library:doc_control_export' dataset='watchdog' fmt='xlsx' %}";
+  var exportPdfBase = "{% url 'library:doc_control_export' dataset='watchdog' fmt='pdf' %}";
+  var links = bar.querySelectorAll('.wd-cat-link');
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+
+  function severityClass(sev) {
+    return sev === 'high' ? 'qms-red' : sev === 'medium' ? 'qms-yellow' : 'qms-grey';
+  }
+
+  function setActive(category) {
+    links.forEach(function (a) {
+      var badge = a.querySelector('.qms-badge');
+      var isActive = a.dataset.category === category;
+      badge.classList.remove('qms-blue', 'qms-red', 'qms-yellow', 'qms-grey');
+      badge.classList.add(isActive ? 'qms-blue' : a.dataset.inactiveClass);
+    });
+  }
+
+  function renderRow(f) {
+    var previewBtn = f.target_type === 'document'
+      ? '<button type="button" class="link-btn" onclick="event.stopPropagation();docControlPreview(' + f.target_id + ')">Preview</button> &middot; '
+      : '';
+    return '<tr class="qms-row" onclick="window.open(\'' + f.admin_url + '\', \'_blank\')">' +
+      '<td><span class="qms-badge ' + severityClass(f.severity) + '">' + escapeHtml(f.severity.toUpperCase()) + '</span></td>' +
+      '<td title="' + escapeHtml(f.category_label) + '">' + escapeHtml(f.category_label) + '</td>' +
+      '<td>' + escapeHtml(f.code || '—') + '</td>' +
+      '<td title="' + escapeHtml(f.title) + '">' + escapeHtml(f.title) + '</td>' +
+      '<td title="' + escapeHtml(f.folder) + '">' + escapeHtml(f.folder || '—') + '</td>' +
+      '<td style="white-space:normal">' + escapeHtml(f.message) + '</td>' +
+      '<td onclick="event.stopPropagation()" style="white-space:nowrap">' + previewBtn +
+        '<a href="' + f.admin_url + '" target="_blank" rel="noopener">Open</a></td>' +
+      '</tr>';
+  }
+
+  window.loadWatchdogCategory = function (category, evt) {
+    if (evt) evt.preventDefault();
+    setActive(category);
+    tbody.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
+    if (hint) hint.textContent = category ? 'Loading findings for this category…' : 'Loading all findings…';
+
+    var url = apiUrl + (category ? '?wd_category=' + encodeURIComponent(category) : '');
+    fetch(url).then(function (r) { return r.json(); }).then(function (data) {
+      var findings = data.findings || [];
+      tbody.innerHTML = findings.length ? findings.map(renderRow).join('') : '<tr><td colspan="7">No inconsistencies in this category. 🎉</td></tr>';
+      if (hint) hint.textContent = 'Click a category above to open its documents/findings below, in place — no page reload.';
+      if (shownNote) {
+        if (data.total_count > 300) {
+          shownNote.style.display = '';
+          shownNote.textContent = 'Showing the first 300 of ' + data.total_count + ' findings on screen — export to Excel/PDF for the full list.';
+        } else {
+          shownNote.style.display = 'none';
+        }
+      }
+      var qs = category ? '?wd_category=' + encodeURIComponent(category) : '';
+      if (exportXlsx) exportXlsx.href = exportXlsxBase + qs;
+      if (exportPdf) exportPdf.href = exportPdfBase + qs;
+      history.replaceState(null, '', category ? '?wd_category=' + encodeURIComponent(category) : location.pathname);
+    }).catch(function () {
+      tbody.innerHTML = '<tr><td colspan="7">Could not load findings — please try again.</td></tr>';
+    });
+  };
+})();
+function appendAgentMsg(who, text, documents) {
+  var log = document.getElementById('qms-agent-log');
+  var div = document.createElement('div');
+  div.className = 'chat-msg ' + who;
+  div.textContent = text;
+  log.appendChild(div);
+  (documents || []).forEach(function (d) {
+    var a = document.createElement('a');
+    a.href = d.url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'chat-result';
+    a.textContent = (d.code ? d.code + ' — ' : '') + d.title;
+    log.appendChild(a);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+document.getElementById('qms-agent-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var input = document.getElementById('qms-agent-input');
+  var text = input.value.trim();
+  if (!text) return;
+  appendAgentMsg('user', text);
+  input.value = '';
+  fetch("{% url 'library:doc_control_agent_ask' %}", {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+    body: JSON.stringify({ message: text }),
+  }).then(function (r) { return r.json(); }).then(function (data) {
+    appendAgentMsg('bot', data.reply, data.documents || []);
+  }).catch(function () {
+    appendAgentMsg('bot', 'Agent is unavailable right now.', []);
+  });
+});
+</script>
+{% endblock %}

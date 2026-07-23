@@ -35,3 +35,13 @@ def ext_in(document, allowed_formats):
 def file_ext(document):
     """Uppercase file extension for display, e.g. 'PDF'."""
     return _file_ext(document).upper()
+
+
+@register.filter
+def is_management_user(user):
+    """Nav-link visibility check for the admin-only Document Control tool —
+    mirrors views.is_management() without importing views from a template
+    tag module (avoids a needless import-time coupling)."""
+    return bool(user and user.is_authenticated and (
+        user.is_superuser or user.groups.filter(name="management").exists()
+    ))
